@@ -52,9 +52,11 @@ class SummaryAgent:
             grow_count = analysis['Grow_performance']['count']
             maintain_count = analysis['Maintain_performance']['count']
             
-            # Add header and footer with ROE and Portfolio tables
+            # Add header and footer with all tables
             roe_table = self._format_roe_table(analysis["roe_table"])
             portfolio_table = self._format_portfolio_table(analysis["portfolio_table"])
+            rates_table = self._format_rates_table(analysis["rates_table"])
+            profit_table = self._format_profit_table(analysis["profit_table"])
             summary = f"""# Loan Market Simulation Summary
 
 **Simulation Parameters:**
@@ -72,6 +74,18 @@ class SummaryAgent:
 ## ROE by Round (%)
 
 {roe_table}
+
+---
+
+## Interest Rates by Round (bps)
+
+{rates_table}
+
+---
+
+## Profit by Round ($M)
+
+{profit_table}
 
 ---
 
@@ -154,6 +168,14 @@ class SummaryAgent:
         # Portfolio balance table (rounds x banks) - using portfolio_balance_start
         portfolio_pivot = market_df.pivot(index="round", columns="bank_id", values="portfolio_balance_start")
         analysis["portfolio_table"] = portfolio_pivot.to_dict()
+
+        # Interest rates table (rounds x banks)
+        rates_pivot = market_df.pivot(index="round", columns="bank_id", values="offered_rate")
+        analysis["rates_table"] = rates_pivot.to_dict()
+
+        # Profit table (rounds x banks)
+        profit_pivot = market_df.pivot(index="round", columns="bank_id", values="profit")
+        analysis["profit_table"] = profit_pivot.to_dict()
 
         return analysis
 
@@ -274,6 +296,79 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
         
         return "\n".join(lines)
 
+    def _format_rates_table(self, rates_data: Dict) -> str:
+        """Format Interest Rates table for display."""
+        # rates_data is structured as {bank_id: {round: rate_value}}
+        if not rates_data:
+            return "No rates data available"
+        
+        # Get all banks and rounds
+        banks = sorted(rates_data.keys())
+        rounds = sorted(set().union(*(rates_data[bank].keys() for bank in banks)))
+        
+        # Build table
+        lines = []
+        
+        # Header row
+        header = "| Round |" + "".join([f" {bank} |" for bank in banks])
+        lines.append(header)
+        
+        # Separator row
+        separator = "|-------|" + "".join([f"------|" for _ in banks])
+        lines.append(separator)
+        
+        # Data rows
+        for round_num in rounds:
+            row = f"| {round_num:5d} |"
+            for bank in banks:
+                rate_val = rates_data[bank].get(round_num, 0)
+                if rate_val == 0:
+                    row += f"   0 |"
+                else:
+                    row += f" {rate_val:3.0f} |"
+            lines.append(row)
+        
+        return "\n".join(lines)
+
+    def _format_profit_table(self, profit_data: Dict) -> str:
+        """Format Profit table for display."""
+        # profit_data is structured as {bank_id: {round: profit_value}}
+        if not profit_data:
+            return "No profit data available"
+        
+        # Get all banks and rounds
+        banks = sorted(profit_data.keys())
+        rounds = sorted(set().union(*(profit_data[bank].keys() for bank in banks)))
+        
+        # Build table
+        lines = []
+        
+        # Header row
+        header = "| Round |" + "".join([f" {bank} |" for bank in banks])
+        lines.append(header)
+        
+        # Separator row
+        separator = "|-------|" + "".join([f"------|" for _ in banks])
+        lines.append(separator)
+        
+        # Data rows
+        for round_num in rounds:
+            row = f"| {round_num:5d} |"
+            for bank in banks:
+                profit_val = profit_data[bank].get(round_num, 0.0)
+                if profit_val == 0.0:
+                    row += f"  $0.0 |"
+                else:
+                    # Convert to millions and format
+                    profit_millions = profit_val / 1_000_000
+                    if profit_millions >= 0:
+                        row += f" ${profit_millions:4.1f} |"
+                    else:
+                        row += f"${profit_millions:5.1f} |"
+            lines.append(row)
+        
+        return "\n".join(lines)
+
     async def _get_llm_summary(self, prompt: str) -> str:
         """Get summary from LLM."""
         messages = [
@@ -290,6 +385,8 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
         """Generate basic summary if AI fails."""
         roe_table = self._format_roe_table(analysis.get("roe_table", {}))
         portfolio_table = self._format_portfolio_table(analysis.get("portfolio_table", {}))
+        rates_table = self._format_rates_table(analysis.get("rates_table", {}))
+        profit_table = self._format_profit_table(analysis.get("profit_table", {}))
         return f"""## Analysis Results
 
 ### Strategy Performance
@@ -310,6 +407,18 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
 ## ROE by Round (%)
 
 {roe_table}
+
+---
+
+## Interest Rates by Round (bps)
+
+{rates_table}
+
+---
+
+## Profit by Round ($M)
+
+{profit_table}
 
 ---
 
