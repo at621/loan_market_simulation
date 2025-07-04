@@ -1,0 +1,153 @@
+seed: 42
+simulation_params:
+  rounds: 10
+  amortization_years: 5
+
+customer_params:
+  count: 100
+  loan_size_dist:
+    mean: 100000
+    sigma: 25000 # Std Dev for LogNormal distribution
+  attribute_dist:
+    # Beta distribution parameters (alpha, beta) for 0-1 scores
+    # High alpha/beta (e.g., >2) centers the distribution around 0.5
+    # One high, one low skews it. (e.g., a=5, b=2 skews towards 1)
+    alpha: 2.0
+    beta: 2.0
+
+bank_params:
+  count: 10
+  # Individual bank configurations - varying sizes and strategies
+  individual_banks:
+    B00:
+      name: "MegaBank"
+      strategy: "Maintain"
+      size_category: "large"
+      equity_start: 50000000
+      portfolio_balance_start: 500000000
+      portfolio_rate_start_bps: 480
+      image_score: 0.9  # Strong brand
+      execution_speed: 0.7  # Slower due to size
+      cost_of_funds_bps: 280  # Better funding costs
+      operating_cost_per_loan: 800
+    B01:
+      name: "GrowthBank"
+      strategy: "Grow"
+      size_category: "medium"
+      equity_start: 20000000
+      portfolio_balance_start: 200000000
+      portfolio_rate_start_bps: 500
+      image_score: 0.6
+      execution_speed: 0.8
+      cost_of_funds_bps: 300
+      operating_cost_per_loan: 1000
+    B02:
+      name: "ChallengerBank"
+      strategy: "Grow"
+      size_category: "small"
+      equity_start: 8000000
+      portfolio_balance_start: 80000000
+      portfolio_rate_start_bps: 520
+      image_score: 0.5
+      execution_speed: 0.9  # Fast and nimble
+      cost_of_funds_bps: 320  # Higher funding costs
+      operating_cost_per_loan: 1200
+    B03:
+      name: "RegionalBank"
+      strategy: "Maintain"
+      size_category: "medium"
+      equity_start: 15000000
+      portfolio_balance_start: 150000000
+      portfolio_rate_start_bps: 490
+      image_score: 0.7
+      execution_speed: 0.75
+      cost_of_funds_bps: 300
+      operating_cost_per_loan: 950
+    B04:
+      name: "FinTech"
+      strategy: "Grow"
+      size_category: "small"
+      equity_start: 5000000
+      portfolio_balance_start: 50000000
+      portfolio_rate_start_bps: 550
+      image_score: 0.4
+      execution_speed: 0.95  # Very fast
+      cost_of_funds_bps: 350  # Highest funding costs
+      operating_cost_per_loan: 500  # Low operating costs
+    B05:
+      name: "EstablishedBank"
+      strategy: "Maintain"
+      size_category: "large"
+      equity_start: 35000000
+      portfolio_balance_start: 350000000
+      portfolio_rate_start_bps: 475
+      image_score: 0.85
+      execution_speed: 0.65
+      cost_of_funds_bps: 285
+      operating_cost_per_loan: 850
+    B06:
+      name: "CommunityBank"
+      strategy: "Maintain"
+      size_category: "small"
+      equity_start: 6000000
+      portfolio_balance_start: 60000000
+      portfolio_rate_start_bps: 510
+      image_score: 0.8  # Strong local reputation
+      execution_speed: 0.7
+      cost_of_funds_bps: 310
+      operating_cost_per_loan: 1100
+    B07:
+      name: "AggressiveGrowth"
+      strategy: "Grow"
+      size_category: "medium"
+      equity_start: 12000000
+      portfolio_balance_start: 120000000
+      portfolio_rate_start_bps: 520
+      image_score: 0.55
+      execution_speed: 0.85
+      cost_of_funds_bps: 310
+      operating_cost_per_loan: 1050
+    B08:
+      name: "OnlineBank"
+      strategy: "Grow"
+      size_category: "medium"
+      equity_start: 10000000
+      portfolio_balance_start: 100000000
+      portfolio_rate_start_bps: 530
+      image_score: 0.45
+      execution_speed: 0.92  # Digital efficiency
+      cost_of_funds_bps: 330
+      operating_cost_per_loan: 600  # Low operating costs
+    B09:
+      name: "ConservativeBank"
+      strategy: "Maintain"
+      size_category: "medium"
+      equity_start: 18000000
+      portfolio_balance_start: 180000000
+      portfolio_rate_start_bps: 485
+      image_score: 0.75
+      execution_speed: 0.68
+      cost_of_funds_bps: 295
+      operating_cost_per_loan: 900
+  # Default values if not specified per bank
+  default_conditions:
+    cost_of_funds_bps: 300
+    operating_cost_per_loan: 1000
+    equity_start: 10000000
+    portfolio_balance_start: 100000000
+    portfolio_rate_start_bps: 500
+
+behavior_params:
+  # Consumer reservation utility: if max utility is below this, no loan is taken
+  reservation_utility: 0.35
+  # Bank Heuristics (used as fallback if AI agent fails)
+  grow_undercut_bps: 15 # How many bps a Grow bank undercuts the avg rate by
+  maintain_walk_stdev_bps: 5 # Std Dev of the random walk for Maintain banks
+
+# AI Agent configuration
+ai_agent_params:
+  model: "gpt-4"  # or "claude-3-opus" etc.
+  temperature: 0.7
+  max_retries: 3
+  timeout_seconds: 30
+  use_fallback_on_error: true
