@@ -21,7 +21,7 @@ This simulation models 10 banks competing for loans from 100 consumers over 10 r
    pip install -r requirements.txt
    ```
 
-2. **Set API Key** (optional - uses mock agents if not set):
+2. **Set API Key** (required):
    ```bash
    export OPENAI_API_KEY='your-api-key'
    ```
@@ -39,7 +39,7 @@ This simulation models 10 banks competing for loans from 100 consumers over 10 r
 │   └── config.yaml        # Bank parameters & simulation settings
 ├── agents/                 # AI agent implementations
 │   ├── bank_agent.py      # LLM-powered bank decisions
-│   └── mock_*.py          # Test versions without API
+│   └── summary_agent.py   # LLM-powered analysis
 ├── src/                    # Core simulation code
 │   ├── simulation.py      # Main LangGraph orchestrator
 │   ├── models.py          # Data structures

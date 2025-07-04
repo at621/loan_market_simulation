@@ -4,26 +4,28 @@
 import subprocess
 import sys
 
+
 def install_requirements():
     """Install required packages."""
     print("Installing required packages...")
-    
+
     try:
-        subprocess.check_call([
-            sys.executable, "-m", "pip", "install", "-r", "requirements.txt"
-        ])
+        subprocess.check_call(
+            [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"]
+        )
         print("✓ All packages installed successfully")
         return True
     except subprocess.CalledProcessError as e:
         print(f"✗ Failed to install packages: {e}")
         return False
 
+
 def main():
     """Main setup function."""
     print("=" * 50)
     print("LOAN MARKET SIMULATION - SETUP")
     print("=" * 50)
-    
+
     if install_requirements():
         print("\n✅ Setup complete!")
         print("\nNext steps:")
@@ -34,6 +36,7 @@ def main():
     else:
         print("\n❌ Setup failed!")
         return 1
+
 
 if __name__ == "__main__":
     sys.exit(main())

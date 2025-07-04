@@ -26,13 +26,12 @@ import os
 from src.consumer_logic import ConsumerDecisionEngine
 from src.financial_calculator import FinancialCalculator
 
-# Use mock agents if no OpenAI API key is available
-if os.getenv("OPENAI_API_KEY"):
-    from agents.bank_agent import BankAgent
-    from agents.summary_agent import SummaryAgent
-else:
-    from agents.mock_bank_agent import MockBankAgent as BankAgent
-    from agents.mock_summary_agent import MockSummaryAgent as SummaryAgent
+# Require OpenAI API key
+if not os.getenv("OPENAI_API_KEY"):
+    raise ValueError("OPENAI_API_KEY environment variable is required. Please set your OpenAI API key.")
+
+from agents.bank_agent import BankAgent
+from agents.summary_agent import SummaryAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -559,7 +558,9 @@ Market Context (Round {state['current_round']}):
                 }
             }
         except Exception as e:
-            logger.error(f"Bank {state['bank_id']} decision failed: {e}")
+            logger.error(f"Bank {state['bank_id']} decision failed: {e}", exc_info=True)
+            print(f"ERROR: Bank {state['bank_id']} AI agent failed: {e}")
+            print(f"Falling back to heuristic decision for Bank {state['bank_id']}")
             # Fallback to heuristic
             fallback_rate = self._calculate_fallback_rate(state)
             return {
@@ -751,12 +752,12 @@ Market Context (Round {state['current_round']}):
             start_loan_count = len(start_portfolio)
             
             # Calculate weighted average rates
-            if end_loan_count > 0:
+            if end_loan_count > 0 and end_portfolio["principal_outstanding"].sum() > 0:
                 end_avg_rate = (end_portfolio["principal_outstanding"] * end_portfolio["interest_rate_bps"]).sum() / end_portfolio["principal_outstanding"].sum()
             else:
                 end_avg_rate = 0
                 
-            if start_loan_count > 0:
+            if start_loan_count > 0 and start_portfolio["principal_outstanding"].sum() > 0:
                 start_avg_rate = (start_portfolio["principal_outstanding"] * start_portfolio["interest_rate_bps"]).sum() / start_portfolio["principal_outstanding"].sum()
             else:
                 start_avg_rate = 500  # Use initial rate for round 1
@@ -849,7 +850,7 @@ Market Context (Round {state['current_round']}):
         logger.info("Saved data/portfolio_ledger.parquet")
 
         # Save summary
-        with open("data/summary.md", "w") as f:
+        with open("data/summary.md", "w", encoding="utf-8") as f:
             f.write(summary)
         logger.info("Saved data/summary.md")
 

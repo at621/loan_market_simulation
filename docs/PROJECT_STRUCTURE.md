@@ -8,9 +8,7 @@ loan-market-simulation/
 │
 ├── agents/                      # AI agent implementations
 │   ├── bank_agent.py           # Bank decision AI agent (requires OpenAI)
-│   ├── mock_bank_agent.py      # Mock bank agent for testing
-│   ├── summary_agent.py        # Summary generation AI agent
-│   └── mock_summary_agent.py   # Mock summary agent
+│   └── summary_agent.py        # Summary generation AI agent
 │
 ├── src/                         # Core source code
 │   ├── simulation.py           # Main simulation orchestrator (LangGraph)
@@ -51,7 +49,6 @@ loan-market-simulation/
 ### AI Agents (`agents/`)
 - `bank_agent.py` - LLM-powered bank decisions
 - `summary_agent.py` - LLM-powered analysis
-- `mock_*.py` - Non-AI versions for testing
 
 ### Configuration (`config/`)
 - `config.yaml` - All simulation parameters and individual bank setups

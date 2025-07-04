@@ -19,11 +19,17 @@ class BankAgent:
     def __init__(self, config: Dict[str, Any]):
         """Initialize bank agent with AI configuration."""
         self.config = config
-        self.llm = ChatOpenAI(
-            model_name=config.get('model', 'gpt-4'),
-            temperature=config.get('temperature', 0.7),
-            request_timeout=config.get('timeout_seconds', 30)
-        )
+        try:
+            self.llm = ChatOpenAI(
+                model_name=config.get('model', 'gpt-4'),
+                temperature=config.get('temperature', 0.7),
+                request_timeout=config.get('timeout_seconds', 30)
+            )
+        except Exception as e:
+            logger.error(f"Failed to initialize BankAgent LLM: {e}", exc_info=True)
+            print(f"ERROR: Failed to initialize Bank AI agent: {e}")
+            print(f"Check your OpenAI API key and model configuration: {config.get('model', 'gpt-4')}")
+            raise
         self.max_retries = config.get('max_retries', 3)
         self.use_fallback = config.get('use_fallback_on_error', True)
     
@@ -42,11 +48,13 @@ class BankAgent:
                     logger.warning(f"Invalid decision from LLM: {decision.rate_bps} bps")
                     
             except Exception as e:
-                logger.error(f"Attempt {attempt + 1} failed: {e}")
+                logger.error(f"Bank {bank_info['bank_id']} decision attempt {attempt + 1} failed: {e}", exc_info=True)
+                print(f"WARNING: Bank {bank_info['bank_id']} AI decision failed (attempt {attempt + 1}): {e}")
                 if attempt == self.max_retries - 1:
+                    print(f"ERROR: Bank {bank_info['bank_id']} AI agent failed after {self.max_retries} attempts!")
                     raise
         
-        raise Exception("Failed to get valid decision after all retries")
+        raise Exception(f"Bank {bank_info['bank_id']} failed to get valid decision after {self.max_retries} retries")
     
     def _build_prompt(self, bank_info: Dict, market_context: Dict) -> str:
         """Build the prompt for the bank agent."""
