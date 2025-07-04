@@ -108,6 +108,7 @@ class LoanMarketSimulation:
 
         # Initialize portfolio ledger with pre-existing loans
         portfolio_ledger = self._initialize_portfolio(banks_df, consumers_df)
+        
 
         # Initialize bank financials
         bank_financials = {}
@@ -288,6 +289,7 @@ class LoanMarketSimulation:
                 f"${total_balance:,.0f} total, "
                 f"${avg_loan_size:,.0f} avg loan size"
             )
+            
 
         return portfolio_df
 
@@ -295,6 +297,7 @@ class LoanMarketSimulation:
         """Prepare market context for bank agents."""
         state["current_round"] += 1
         logger.info(f"Starting round {state['current_round']}")
+        
 
         # Update active banks (exclude bankrupt)
         active_banks = []
@@ -335,10 +338,11 @@ class LoanMarketSimulation:
         bank_row = state["banks"][state["banks"]["id"] == bank_id].iloc[0]
         financials = state["bank_financials"][bank_id]
 
+
         # Calculate bank-specific metrics
         portfolio = state["portfolio_ledger"][
             (state["portfolio_ledger"]["bank_id"] == bank_id)
-            & (state["portfolio_ledger"]["is_active"] == True)
+            & (state["portfolio_ledger"]["is_active"])
         ]
         
         # Count active loans
@@ -414,7 +418,7 @@ RECENT PRICING HISTORY:
             # Get competitor's portfolio
             comp_portfolio = state["portfolio_ledger"][
                 (state["portfolio_ledger"]["bank_id"] == competitor_id) &
-                (state["portfolio_ledger"]["is_active"] == True)
+                (state["portfolio_ledger"]["is_active"])
             ]
             
             comp_portfolio_balance = comp_portfolio["principal_outstanding"].sum()

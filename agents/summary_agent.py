@@ -52,8 +52,9 @@ class SummaryAgent:
             grow_count = analysis['Grow_performance']['count']
             maintain_count = analysis['Maintain_performance']['count']
             
-            # Add header and footer with ROE table
+            # Add header and footer with ROE and Portfolio tables
             roe_table = self._format_roe_table(analysis["roe_table"])
+            portfolio_table = self._format_portfolio_table(analysis["portfolio_table"])
             summary = f"""# Loan Market Simulation Summary
 
 **Simulation Parameters:**
@@ -71,6 +72,12 @@ class SummaryAgent:
 ## ROE by Round (%)
 
 {roe_table}
+
+---
+
+## Portfolio Balance by Round ($M)
+
+{portfolio_table}
 
 ---
 
@@ -143,6 +150,10 @@ class SummaryAgent:
         # ROE table (rounds x banks)
         roe_pivot = market_df.pivot(index="round", columns="bank_id", values="ROE")
         analysis["roe_table"] = roe_pivot.to_dict()
+
+        # Portfolio balance table (rounds x banks) - using portfolio_balance_start
+        portfolio_pivot = market_df.pivot(index="round", columns="bank_id", values="portfolio_balance_start")
+        analysis["portfolio_table"] = portfolio_pivot.to_dict()
 
         return analysis
 
@@ -227,6 +238,42 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
         
         return "\n".join(lines)
 
+    def _format_portfolio_table(self, portfolio_data: Dict) -> str:
+        """Format Portfolio Balance table for display."""
+        # portfolio_data is structured as {bank_id: {round: portfolio_value}}
+        if not portfolio_data:
+            return "No portfolio data available"
+        
+        # Get all banks and rounds
+        banks = sorted(portfolio_data.keys())
+        rounds = sorted(set().union(*(portfolio_data[bank].keys() for bank in banks)))
+        
+        # Build table
+        lines = []
+        
+        # Header row
+        header = "| Round |" + "".join([f" {bank} |" for bank in banks])
+        lines.append(header)
+        
+        # Separator row
+        separator = "|-------|" + "".join([f"------|" for _ in banks])
+        lines.append(separator)
+        
+        # Data rows
+        for round_num in rounds:
+            row = f"| {round_num:5d} |"
+            for bank in banks:
+                portfolio_val = portfolio_data[bank].get(round_num, 0.0)
+                if portfolio_val == 0.0:
+                    row += f"  $0.0 |"
+                else:
+                    # Convert to millions and format
+                    portfolio_millions = portfolio_val / 1_000_000
+                    row += f" ${portfolio_millions:4.1f} |"
+            lines.append(row)
+        
+        return "\n".join(lines)
+
     async def _get_llm_summary(self, prompt: str) -> str:
         """Get summary from LLM."""
         messages = [
@@ -242,6 +289,7 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
     def _generate_fallback_summary(self, analysis: Dict, error_msg: str = "Unknown error") -> str:
         """Generate basic summary if AI fails."""
         roe_table = self._format_roe_table(analysis.get("roe_table", {}))
+        portfolio_table = self._format_portfolio_table(analysis.get("portfolio_table", {}))
         return f"""## Analysis Results
 
 ### Strategy Performance
@@ -262,6 +310,12 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
 ## ROE by Round (%)
 
 {roe_table}
+
+---
+
+## Portfolio Balance by Round ($M)
+
+{portfolio_table}
 
 ---
 
