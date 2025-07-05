@@ -46,9 +46,15 @@ def update_config(config_path: str, args) -> str:
         )
         config["ai_agent_params"]["model"] = "gpt-4o-mini"
         config["ai_agent_params"]["temperature"] = 0.5
+    
+    if hasattr(args, 'no_memory') and args.no_memory:
+        # Disable memory if requested
+        config["disable_memory"] = True
+        if "memory_params" in config:
+            config["memory_params"]["enabled"] = False
 
     # Save temporary config if modified
-    if args.rounds or args.seed or args.test_mode:
+    if args.rounds or args.seed or args.test_mode or (hasattr(args, 'no_memory') and args.no_memory):
         temp_config_path = "temp_config.yaml"
         with open(temp_config_path, "w") as f:
             yaml.dump(config, f, default_flow_style=False)
@@ -69,6 +75,13 @@ async def main():
         default="config/config.yaml",
         help="Path to configuration file (default: config/config.yaml)",
     )
+    
+    parser.add_argument(
+        "--banks-config",
+        type=str,
+        default="config/initialise_banks.yaml",
+        help="Path to banks configuration file (default: config/initialise_banks.yaml)",
+    )
 
     parser.add_argument(
         "--rounds", type=int, help="Override number of simulation rounds"
@@ -85,6 +98,12 @@ async def main():
     )
 
     parser.add_argument("--verbose", action="store_true", help="Enable verbose logging")
+    
+    parser.add_argument(
+        "--no-memory",
+        action="store_true",
+        help="Disable memory/lessons extraction after simulation"
+    )
 
     args = parser.parse_args()
 
@@ -92,9 +111,13 @@ async def main():
     setup_logging(args.verbose)
     logger = logging.getLogger(__name__)
 
-    # Check config exists
+    # Check config files exist
     if not Path(args.config).exists():
         logger.error(f"Configuration file not found: {args.config}")
+        sys.exit(1)
+        
+    if not Path(args.banks_config).exists():
+        logger.error(f"Banks configuration file not found: {args.banks_config}")
         sys.exit(1)
 
     try:
@@ -109,7 +132,7 @@ async def main():
         if args.test_mode:
             logger.info("Running in TEST MODE - reduced rounds and faster model")
 
-        simulation = LoanMarketSimulation(config_path)
+        simulation = LoanMarketSimulation(config_path, args.banks_config)
 
         # Run the simulation
         await simulation.run()
@@ -125,6 +148,8 @@ async def main():
         logger.info("  - market_log.parquet")
         logger.info("  - portfolio_ledger.parquet")
         logger.info("  - summary.md")
+        if not args.no_memory:
+            logger.info("  - lessons_learned.md")
 
     except KeyboardInterrupt:
         logger.info("\nSimulation interrupted by user")

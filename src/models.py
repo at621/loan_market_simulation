@@ -130,6 +130,11 @@ class SimulationState(TypedDict):
     
     # Outputs
     market_log: List[Dict]
+    
+    # For lessons learned (populated after all rounds)
+    summary_content: Optional[str]  # Content from summary.md
+    initial_bank_configs: Optional[List[Dict]]  # Initial bank configurations
+    lessons_content: Optional[str]  # Generated lessons learned content
 
 
 class BankDecisionState(TypedDict):

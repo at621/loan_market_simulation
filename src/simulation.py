@@ -32,6 +32,7 @@ if not os.getenv("OPENAI_API_KEY"):
 
 from agents.bank_agent import BankAgent
 from agents.summary_agent import SummaryAgent
+from agents.lessons_agent import LessonsAgent
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,10 +41,15 @@ logger = logging.getLogger(__name__)
 class LoanMarketSimulation:
     """Main simulation orchestrator using LangGraph."""
 
-    def __init__(self, config_path: str = "config/config.yaml"):
+    def __init__(self, config_path: str = "config/config.yaml", banks_config_path: str = "config/initialise_banks.yaml"):
         """Initialize simulation with configuration."""
         with open(config_path, "r") as f:
             self.config = yaml.safe_load(f)
+        
+        # Load bank configuration from separate file
+        with open(banks_config_path, "r") as f:
+            banks_config = yaml.safe_load(f)
+            self.config.update(banks_config)
 
         self.seed = self.config["seed"]
         np.random.seed(self.seed)
@@ -53,6 +59,10 @@ class LoanMarketSimulation:
         self.consumer_engine = ConsumerDecisionEngine()
         self.financial_calc = FinancialCalculator()
         self.summary_agent = SummaryAgent(self.config["ai_agent_params"])
+        self.lessons_agent = LessonsAgent(
+            model_name=self.config.get("ai_agent_params", {}).get("model_name", "gpt-4o"),
+            temperature=self.config.get("ai_agent_params", {}).get("temperature", 0.3)
+        )
 
         # Build the graph
         self.graph = self._build_graph()
@@ -70,6 +80,7 @@ class LoanMarketSimulation:
         builder.add_node("calculate_financials", self.calculate_financials)
         builder.add_node("record_round", self.record_round_results)
         builder.add_node("generate_summary", self.generate_summary)
+        builder.add_node("extract_lessons", self.extract_lessons)
 
         # Add edges
         builder.add_edge(START, "initialize")
@@ -92,7 +103,8 @@ class LoanMarketSimulation:
             {"continue": "broadcast_market", "end": "generate_summary"},
         )
 
-        builder.add_edge("generate_summary", END)
+        builder.add_edge("generate_summary", "extract_lessons")
+        builder.add_edge("extract_lessons", END)
 
         return builder.compile()
 
@@ -129,6 +141,20 @@ class LoanMarketSimulation:
                 is_bankrupt=False,
             )
 
+        # Store initial bank configurations
+        initial_bank_configs = []
+        for _, bank in banks_df.iterrows():
+            initial_bank_configs.append({
+                "name": bank["id"],
+                "strategy": bank["strategy"].value if hasattr(bank["strategy"], "value") else bank["strategy"],
+                "equity": bank["equity_start"],
+                "image_score": bank["image_score"],
+                "execution_speed": bank["execution_speed"],
+                "cost_of_funds_bps": bank["cost_of_funds_bps"],
+                "operating_cost_per_loan": bank["operating_cost_per_loan"],
+                "initial_portfolio_balance": bank["portfolio_balance_start"]
+            })
+
         return {
             "current_round": 0,
             "consumers": consumers_df,
@@ -143,6 +169,9 @@ class LoanMarketSimulation:
             "round_summary": None,
             "market_log": [],
             "start_portfolio_balances": {},
+            "initial_bank_configs": initial_bank_configs,
+            "summary_content": None,
+            "lessons_content": None,
         }
 
     def _generate_consumers(self) -> pd.DataFrame:
@@ -1004,7 +1033,51 @@ Market Context (Round {state['current_round']}):
 
         # Save outputs
         self._save_outputs(state, summary)
+        
+        # Store summary content in state for lessons extraction
+        state["summary_content"] = summary
 
+        return state
+    
+    async def extract_lessons(self, state: SimulationState) -> SimulationState:
+        """Extract lessons learned after all iterations are complete."""
+        logger.info("Extracting lessons learned from simulation...")
+        
+        # Skip if memory is disabled
+        if self.config.get("disable_memory", False):
+            logger.info("Memory disabled, skipping lessons extraction")
+            return state
+            
+        # Extract lessons using the AI agent
+        initial_banks = []
+        for bank_config in state["initial_bank_configs"]:
+            initial_banks.append(Bank(
+                id=bank_config["name"],
+                strategy=BankStrategy(bank_config["strategy"]),
+                image_score=bank_config["image_score"],
+                execution_speed=bank_config["execution_speed"],
+                cost_of_funds_bps=bank_config["cost_of_funds_bps"],
+                operating_cost_per_loan=bank_config["operating_cost_per_loan"],
+                initial_equity=bank_config["equity"],
+                initial_portfolio_balance=bank_config["initial_portfolio_balance"]
+            ))
+        
+        lessons, patterns, lessons_md = await self.lessons_agent.extract_lessons(
+            state,
+            state["summary_content"],
+            initial_banks,
+            self.config
+        )
+        
+        # Save lessons to file
+        with open("data/lessons_learned.md", "w", encoding="utf-8") as f:
+            f.write(lessons_md)
+        logger.info("Saved data/lessons_learned.md")
+        
+        # Store in state
+        state["lessons_content"] = lessons_md
+        
+        logger.info(f"Extracted {len(lessons)} lessons and {len(patterns)} patterns")
         return state
 
     def _save_outputs(self, state: SimulationState, summary: str):
@@ -1050,6 +1123,9 @@ Market Context (Round {state['current_round']}):
             "round_summary": None,
             "market_log": [],
             "start_portfolio_balances": {},
+            "initial_bank_configs": None,
+            "summary_content": None,
+            "lessons_content": None,
         }
 
         # Configure with recursion limit
