@@ -2,7 +2,7 @@
 
 import pandas as pd
 import numpy as np
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 import logging
 
 from src.models import BankFinancials
@@ -65,7 +65,8 @@ class FinancialCalculator:
                           banks: pd.DataFrame,
                           previous_equity: float,
                           current_round: int,
-                          new_loan_volume: float = 0) -> BankFinancials:
+                          new_loan_volume: float = 0,
+                          market_history: Optional[List] = None) -> BankFinancials:
         """
         Calculate P&L for a bank for the current round.
         
@@ -132,8 +133,18 @@ class FinancialCalculator:
         else:
             roe = -np.inf if profit < 0 else 0
         
-        # 10. Check bankruptcy
+        # 10. Check bankruptcy (equity <= 0 OR volume < 30% of original)
         is_bankrupt = current_equity <= 0
+        
+        # Check volume-based bankruptcy condition
+        if market_history and len(market_history) > 0:
+            original_volume = market_history[0].new_volumes.get(bank_id, 0)
+            if original_volume > 0:
+                volume_ratio = new_loan_volume / original_volume
+                if volume_ratio < 0.3:
+                    is_bankrupt = True
+                    logger.warning(f"Bank {bank_id} bankrupt due to volume decline: "
+                                 f"{volume_ratio:.1%} of original ${original_volume:,.0f}")
         
         # Log details for debugging
         logger.debug(f"""

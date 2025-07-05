@@ -142,6 +142,7 @@ class LoanMarketSimulation:
             "consumer_allocations": {},
             "round_summary": None,
             "market_log": [],
+            "start_portfolio_balances": {},
         }
 
     def _generate_consumers(self) -> pd.DataFrame:
@@ -178,6 +179,117 @@ class LoanMarketSimulation:
         )
 
         return consumers_df
+
+    def _generate_consumers_for_round(self, state: SimulationState) -> pd.DataFrame:
+        """Generate consumers for a round based on amortization flow with fixed loan sizes."""
+        # Calculate total amortization flow from this round
+        total_amortization = 0
+        amortization_years = self.config["simulation_params"]["amortization_years"]
+        
+        # Sum up amortization from all active loans
+        active_loans = state["portfolio_ledger"][state["portfolio_ledger"]["is_active"] == True]
+        if not active_loans.empty:
+            total_amortization = (active_loans["principal_start"] / amortization_years).sum()
+        
+        # Use fixed loan size from config
+        fixed_loan_size = self.config["customer_params"]["loan_size_dist"]["mean"]
+        
+        # Calculate number of consumers needed to match amortization flow
+        if total_amortization > 0 and fixed_loan_size > 0:
+            num_consumers = max(1, int(round(total_amortization / fixed_loan_size)))
+        else:
+            # Fallback to original consumer count if no amortization
+            num_consumers = self.config["customer_params"]["count"]
+        
+        logger.info(f"Round {state['current_round']}: Total amortization ${total_amortization:,.0f}, "
+                   f"generating {num_consumers} consumers with ${fixed_loan_size:,.0f} fixed loan size")
+        
+        # Generate consumer attributes (same as original but with fixed loan size)
+        alpha = self.config["customer_params"]["attribute_dist"]["alpha"]
+        beta = self.config["customer_params"]["attribute_dist"]["beta"]
+
+        # Generate attributes from Beta distribution
+        rate_sensitivities = np.random.beta(alpha, beta, num_consumers)
+        image_weights_raw = np.random.beta(alpha, beta, num_consumers)
+        speed_weights_raw = np.random.beta(alpha, beta, num_consumers)
+
+        # Normalize weights to sum to 1
+        weight_sums = image_weights_raw + speed_weights_raw
+        image_weights = image_weights_raw / (weight_sums + 1)
+        speed_weights = speed_weights_raw / (weight_sums + 1)
+        rate_weights = 1 - image_weights - speed_weights
+
+        # Use fixed loan size for all consumers
+        loan_sizes = np.full(num_consumers, fixed_loan_size)
+
+        consumers_df = pd.DataFrame(
+            {
+                "id": [f"C{state['current_round']:02d}_{i:03d}" for i in range(num_consumers)],
+                "rate_sensitivity": rate_sensitivities,
+                "image_weight": image_weights,
+                "speed_weight": speed_weights,
+                "rate_weight": rate_weights,
+                "loan_size": loan_sizes,
+            }
+        )
+
+        return consumers_df
+
+    def _build_portfolio_history(self, state: SimulationState) -> List[Dict[str, float]]:
+        """Build portfolio balance history from market log for consumer utility calculations."""
+        portfolio_history = []
+        
+        # Extract portfolio balance data from market log
+        for entry in state["market_log"]:
+            round_data = {}
+            # Group by round to get all banks' portfolio balances for each round
+            current_round = entry["round"]
+            
+            # Find all entries for this round
+            round_entries = [e for e in state["market_log"] if e["round"] == current_round]
+            
+            for round_entry in round_entries:
+                bank_id = round_entry["bank_id"]
+                portfolio_balance = round_entry.get("portfolio_balance_start", 0.0)
+                round_data[bank_id] = portfolio_balance
+            
+            # Only add if we have data for this round and it's not already added
+            if round_data and not any(rd == round_data for rd in portfolio_history):
+                portfolio_history.append(round_data)
+        
+        # If no history yet, use current start balances
+        if not portfolio_history and "start_portfolio_balances" in state:
+            portfolio_history.append(state["start_portfolio_balances"].copy())
+        
+        return portfolio_history
+
+    def _calculate_bank_capacities(self, state: SimulationState) -> Dict[str, float]:
+        """Calculate each bank's available lending capacity (10x equity - current portfolio)."""
+        bank_capacities = {}
+        
+        for bank_id in state["active_bank_ids"]:
+            # Get current equity
+            current_equity = state["bank_financials"][bank_id].equity
+            
+            # Get current portfolio balance
+            bank_portfolio = state["portfolio_ledger"][
+                (state["portfolio_ledger"]["bank_id"] == bank_id) &
+                (state["portfolio_ledger"]["is_active"] == True)
+            ]
+            current_portfolio = bank_portfolio["principal_outstanding"].sum()
+            
+            # Calculate maximum allowed portfolio (10x equity)
+            max_portfolio = current_equity * 10
+            
+            # Available capacity is the difference
+            available_capacity = max(0, max_portfolio - current_portfolio)
+            bank_capacities[bank_id] = available_capacity
+            
+            logger.info(f"Bank {bank_id} capacity: ${current_equity:,.0f} equity * 10 = "
+                       f"${max_portfolio:,.0f} max, ${current_portfolio:,.0f} current, "
+                       f"${available_capacity:,.0f} available")
+        
+        return bank_capacities
 
     def _generate_banks(self) -> pd.DataFrame:
         """Generate bank population from individual configurations."""
@@ -298,17 +410,29 @@ class LoanMarketSimulation:
         state["current_round"] += 1
         logger.info(f"Starting round {state['current_round']}")
         
-
-        # Update active banks (exclude bankrupt)
+        # Update active bank list - exclude banks with zero portfolio balance or bankruptcy
         active_banks = []
-        for bank_id, financials in state["bank_financials"].items():
-            if not financials.is_bankrupt:
-                active_banks.append(bank_id)
-
+        for bank_id in state["banks"]["id"]:
+            # Check if bank is bankrupt
+            if state["bank_financials"][bank_id].is_bankrupt:
+                continue
+                
+            # Check if bank has zero portfolio balance (cannot originate loans)
+            bank_portfolio = state["portfolio_ledger"][
+                (state["portfolio_ledger"]["bank_id"] == bank_id) &
+                (state["portfolio_ledger"]["is_active"] == True)
+            ]
+            portfolio_balance = bank_portfolio["principal_outstanding"].sum()
+            
+            if portfolio_balance <= 0:
+                logger.info(f"Bank {bank_id} excluded from loan origination: zero portfolio balance")
+                continue
+                
+            active_banks.append(bank_id)
+        
         state["active_bank_ids"] = active_banks
         state["bank_decisions"] = {}
-
-        logger.info(f"Active banks: {len(active_banks)}")
+        logger.info(f"Active banks for round {state['current_round']}: {len(active_banks)} banks - {active_banks}")
         return state
 
     def route_to_bank_agents(self, state: SimulationState) -> List[Send]:
@@ -612,12 +736,25 @@ Market Context (Round {state['current_round']}):
 
     def consumer_decision_phase(self, state: SimulationState) -> SimulationState:
         """Process all consumer decisions."""
+        # For round 1, use the initial consumers
+        # For subsequent rounds, generate new consumers based on amortization flow
+        if state["current_round"] > 1:
+            state["consumers"] = self._generate_consumers_for_round(state)
+        
+        # Build portfolio history from market log for consumer utility calculations
+        portfolio_history = self._build_portfolio_history(state)
+        
+        # Calculate bank lending capacities (10x equity - current portfolio)
+        bank_capacities = self._calculate_bank_capacities(state)
+        
         allocations = self.consumer_engine.allocate_consumers(
             state["consumers"],
             state["market_rates"],
             state["banks"],
             state["active_bank_ids"],
             self.config["behavior_params"]["reservation_utility"],
+            portfolio_history,
+            bank_capacities,
         )
 
         state["consumer_allocations"] = allocations
@@ -625,6 +762,17 @@ Market Context (Round {state['current_round']}):
 
     def calculate_financials(self, state: SimulationState) -> SimulationState:
         """Update portfolios and calculate P&L for all banks."""
+        # Store start-of-round portfolio balances before amortization
+        start_portfolio_balances = {}
+        for bank_id in state["banks"]["id"]:
+            bank_portfolio = state["portfolio_ledger"][
+                (state["portfolio_ledger"]["bank_id"] == bank_id) &
+                (state["portfolio_ledger"]["is_active"] == True)
+            ]
+            start_portfolio_balances[bank_id] = bank_portfolio["principal_outstanding"].sum()
+        
+        state["start_portfolio_balances"] = start_portfolio_balances
+        
         # Amortize existing portfolio
         state["portfolio_ledger"] = self.financial_calc.amortize_portfolio(
             state["portfolio_ledger"],
@@ -660,6 +808,7 @@ Market Context (Round {state['current_round']}):
                 state["bank_financials"][bank_id].equity,
                 state["current_round"],
                 new_loan_volume,
+                state["market_history"],
             )
             new_financials[bank_id] = financials
 
@@ -695,6 +844,30 @@ Market Context (Round {state['current_round']}):
 
     def record_round_results(self, state: SimulationState) -> SimulationState:
         """Record round results for output."""
+        # Update active bank list for next round based on current portfolio balances
+        # This ensures banks with $0.0 balance after this round don't participate in next round
+        active_banks_next_round = []
+        for bank_id in state["banks"]["id"]:
+            # Check if bank is bankrupt
+            if state["bank_financials"][bank_id].is_bankrupt:
+                continue
+                
+            # Check if bank has zero portfolio balance (cannot originate loans)
+            bank_portfolio = state["portfolio_ledger"][
+                (state["portfolio_ledger"]["bank_id"] == bank_id) &
+                (state["portfolio_ledger"]["is_active"] == True)
+            ]
+            portfolio_balance = bank_portfolio["principal_outstanding"].sum()
+            
+            if portfolio_balance <= 0:
+                logger.info(f"Bank {bank_id} will be excluded from next round: zero portfolio balance")
+                continue
+                
+            active_banks_next_round.append(bank_id)
+        
+        # Store for next round (but don't update current round's active list)
+        state["active_bank_ids_next_round"] = active_banks_next_round
+        
         # Create market snapshot
         snapshot = MarketSnapshot(
             round=state["current_round"],
@@ -746,8 +919,10 @@ Market Context (Round {state['current_round']}):
             ]
             
             # Get start-of-round portfolio (before this round's amortization and new loans)
+            # This should be all active loans at the start of the round
             start_portfolio = state["portfolio_ledger"][
                 (state["portfolio_ledger"]["bank_id"] == bank_id) &
+                (state["portfolio_ledger"]["is_active"] == True) &
                 (state["portfolio_ledger"]["round_added"] < state["current_round"])
             ]
             
@@ -791,7 +966,7 @@ Market Context (Round {state['current_round']}):
                     "end_loan_count": end_loan_count,
                     "start_avg_rate_bps": start_avg_rate,
                     "end_avg_rate_bps": end_avg_rate,
-                    "portfolio_balance_start": start_portfolio["principal_outstanding"].sum() if start_loan_count > 0 else 0,
+                    "portfolio_balance_start": start_portfolio["principal_outstanding"].sum(),
                     "portfolio_balance_end": end_portfolio["principal_outstanding"].sum(),
                     "loans_added": snapshot.new_counts[bank_id],
                     "loans_amortized": max(0, start_loan_count + snapshot.new_counts[bank_id] - end_loan_count),
@@ -874,6 +1049,7 @@ Market Context (Round {state['current_round']}):
             "consumer_allocations": {},
             "round_summary": None,
             "market_log": [],
+            "start_portfolio_balances": {},
         }
 
         # Configure with recursion limit

@@ -78,6 +78,9 @@ class BankAgent:
             market_context["total_rounds"] - market_context["current_round"] + 1
         )
 
+        # Build historical performance data
+        historical_data = self._build_historical_data(bank_info, market_context)
+
         # Get market statistics
         if market_context["market_history"]:
             last_round = market_context["market_history"][-1]
@@ -119,6 +122,9 @@ class BankAgent:
                 if bid != bank_info["bank_id"]
             ]
 
+        # Check bankruptcy condition (portfolio volume below 30% of original)
+        bankruptcy_warning = self._check_bankruptcy_risk(bank_info, market_context)
+
         # Build the prompt
         prompt = f"""You are the CEO of {bank_info['bank_id']} in a competitive loan market simulation.
 
@@ -143,6 +149,11 @@ MARKET INTELLIGENCE:
 - Your Market Share: {market_share:.1f}%
 - Banks with Negative Profit: {len(struggling_banks)}
 - Consumer Reservation Utility: {market_context['behavior_params']['reservation_utility']}
+
+{bankruptcy_warning}
+
+HISTORICAL PERFORMANCE DATA:
+{historical_data}
 
 COMPETITOR STRATEGIES:
 {chr(10).join(competitor_strategies)}
@@ -245,3 +256,68 @@ Make your decision:"""
             reasoning=reasoning,
             expected_outcome=expected,
         )
+
+    def _build_historical_data(self, bank_info: Dict, market_context: Dict) -> str:
+        """Build historical performance data table for the bank agent."""
+        if not market_context.get("market_history"):
+            return "No historical data available (first round)."
+        
+        bank_id = bank_info["bank_id"]
+        history = market_context["market_history"]
+        
+        # Build table header
+        lines = ["Round | ROE (%) | Rate (bps) | Volume ($M) | Market Share (%)"]
+        lines.append("------|---------|-----------|-------------|----------------")
+        
+        for i, round_data in enumerate(history, 1):
+            # Get this bank's data for the round
+            roe = round_data.profits.get(bank_id, 0) / max(1, round_data.equities.get(bank_id, 1)) * 100
+            rate = round_data.offered_rates.get(bank_id, 0)
+            volume = round_data.new_volumes.get(bank_id, 0) / 1_000_000  # Convert to millions
+            
+            # Calculate market share
+            total_volume = sum(round_data.new_volumes.values())
+            market_share = (round_data.new_volumes.get(bank_id, 0) / total_volume * 100) if total_volume > 0 else 0
+            
+            lines.append(f"  {i:2d}  | {roe:7.1f} | {rate:9d} | {volume:11.1f} | {market_share:14.1f}")
+        
+        return "\n".join(lines)
+
+    def _check_bankruptcy_risk(self, bank_info: Dict, market_context: Dict) -> str:
+        """Check if bank is at risk of bankruptcy due to volume decline."""
+        if not market_context.get("market_history"):
+            return ""
+        
+        bank_id = bank_info["bank_id"]
+        history = market_context["market_history"]
+        
+        # Get original volume (first round)
+        if not history:
+            return ""
+        
+        original_volume = history[0].new_volumes.get(bank_id, 0)
+        if original_volume == 0:
+            return ""
+        
+        # Get current volume (last round)
+        current_volume = history[-1].new_volumes.get(bank_id, 0)
+        
+        # Calculate percentage of original
+        volume_ratio = current_volume / original_volume if original_volume > 0 else 0
+        
+        if volume_ratio < 0.3:
+            return f"""
+🚨 BANKRUPTCY WARNING: Your loan volume has dropped to {volume_ratio:.1%} of original levels!
+- Original volume: ${original_volume:,.0f}
+- Current volume: ${current_volume:,.0f}
+- Risk: Below 30% threshold triggers bankruptcy
+- Action needed: Aggressive recovery strategy required
+"""
+        elif volume_ratio < 0.5:
+            return f"""
+⚠️  VOLUME ALERT: Your loan volume is {volume_ratio:.1%} of original levels.
+- Risk of approaching 30% bankruptcy threshold
+- Consider defensive pricing or market share recovery tactics
+"""
+        
+        return ""

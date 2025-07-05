@@ -122,6 +122,7 @@ class SimulationState(TypedDict):
     # Portfolio and financials
     portfolio_ledger: pd.DataFrame
     bank_financials: Dict[str, BankFinancials]  # Current state
+    start_portfolio_balances: Dict[str, float]  # Portfolio balances before amortization
     
     # Round results
     consumer_allocations: Dict[str, Optional[str]]  # consumer_id -> bank_id or None

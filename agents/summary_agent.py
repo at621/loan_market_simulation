@@ -57,6 +57,7 @@ class SummaryAgent:
             portfolio_table = self._format_portfolio_table(analysis["portfolio_table"])
             rates_table = self._format_rates_table(analysis["rates_table"])
             profit_table = self._format_profit_table(analysis["profit_table"])
+            equity_table = self._format_equity_table(analysis["equity_table"])
             summary = f"""# Loan Market Simulation Summary
 
 **Simulation Parameters:**
@@ -92,6 +93,12 @@ class SummaryAgent:
 ## Portfolio Balance by Round ($M)
 
 {portfolio_table}
+
+---
+
+## Equity by Round ($M)
+
+{equity_table}
 
 ---
 
@@ -176,6 +183,10 @@ class SummaryAgent:
         # Profit table (rounds x banks)
         profit_pivot = market_df.pivot(index="round", columns="bank_id", values="profit")
         analysis["profit_table"] = profit_pivot.to_dict()
+
+        # Equity table (rounds x banks)
+        equity_pivot = market_df.pivot(index="round", columns="bank_id", values="equity")
+        analysis["equity_table"] = equity_pivot.to_dict()
 
         return analysis
 
@@ -369,6 +380,45 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
         
         return "\n".join(lines)
 
+    def _format_equity_table(self, equity_data: Dict) -> str:
+        """Format Equity table for display."""
+        # equity_data is structured as {bank_id: {round: equity_value}}
+        if not equity_data:
+            return "No equity data available"
+        
+        # Get all banks and rounds
+        banks = sorted(equity_data.keys())
+        rounds = sorted(set().union(*(equity_data[bank].keys() for bank in banks)))
+        
+        # Build table
+        lines = []
+        
+        # Header row
+        header = "| Round |" + "".join([f" {bank} |" for bank in banks])
+        lines.append(header)
+        
+        # Separator row
+        separator = "|-------|" + "".join([f"------|" for _ in banks])
+        lines.append(separator)
+        
+        # Data rows
+        for round_num in rounds:
+            row = f"| {round_num:5d} |"
+            for bank in banks:
+                equity_val = equity_data[bank].get(round_num, 0.0)
+                if equity_val == 0.0:
+                    row += f"  $0.0 |"
+                else:
+                    # Convert to millions and format
+                    equity_millions = equity_val / 1_000_000
+                    if equity_millions >= 0:
+                        row += f" ${equity_millions:4.1f} |"
+                    else:
+                        row += f"${equity_millions:5.1f} |"
+            lines.append(row)
+        
+        return "\n".join(lines)
+
     async def _get_llm_summary(self, prompt: str) -> str:
         """Get summary from LLM."""
         messages = [
@@ -387,6 +437,7 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
         portfolio_table = self._format_portfolio_table(analysis.get("portfolio_table", {}))
         rates_table = self._format_rates_table(analysis.get("rates_table", {}))
         profit_table = self._format_profit_table(analysis.get("profit_table", {}))
+        equity_table = self._format_equity_table(analysis.get("equity_table", {}))
         return f"""## Analysis Results
 
 ### Strategy Performance
@@ -425,6 +476,12 @@ Focus on data-driven insights and actionable conclusions. Use specific numbers t
 ## Portfolio Balance by Round ($M)
 
 {portfolio_table}
+
+---
+
+## Equity by Round ($M)
+
+{equity_table}
 
 ---
 
