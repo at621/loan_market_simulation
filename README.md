@@ -1,10 +1,10 @@
 # Loan Market Simulation
 
-A sophisticated loan market simulation using LangGraph and AI agents to model competitive dynamics between banks.
+A sophisticated loan market simulation using LangGraph and AI agents to model competitive dynamics between banks, with two-tier learning and adaptive market design capabilities.
 
 ## Overview
 
-This simulation models 10 banks competing for loans from 100 consumers over 10 rounds. Each bank is controlled by an AI agent that makes strategic pricing decisions based on market conditions, competitive intelligence, and financial constraints.
+This simulation models 10 banks competing for loans from 100 consumers over multiple rounds. Each bank is controlled by an AI agent that makes strategic pricing decisions based on market conditions, competitive intelligence, and financial constraints. The system supports both single simulations and meta-simulations that test different market configurations to discover optimal market design principles.
 
 ## Features
 
@@ -12,6 +12,11 @@ This simulation models 10 banks competing for loans from 100 consumers over 10 r
 - **Heterogeneous Banks**: Varying sizes ($50M-$500M portfolios), strategies, and cost structures
 - **Consumer Choice Model**: Utility-based decisions considering rates, bank image, and service speed
 - **Dynamic Competition**: Banks adapt strategies based on market conditions and competitor behavior
+- **Two-Tier Learning System**: 
+  - Micro-lessons: Insights from individual simulation runs
+  - Macro-lessons: Market design principles from testing different configurations
+- **Meta-Simulation Mode**: Run multiple "megaruns" with adaptive bank configurations to test hypotheses
+- **Long-Term Memory**: Stores lessons learned across simulations for future reference
 - **Comprehensive Analytics**: Detailed logging and output datasets for analysis
 
 ## Quick Start
@@ -28,46 +33,101 @@ This simulation models 10 banks competing for loans from 100 consumers over 10 r
 
 3. **Run Simulation**:
    ```bash
-   python run_sim.py --test-mode  # Quick 3-round test
-   python run_sim.py              # Full 10-round simulation
+   # Quick test mode (3 rounds, faster model)
+   python run_sim.py --test-mode
+   
+   # Full single simulation (10 rounds)
+   python run_sim.py
+   
+   # Meta-simulation with 3 megaruns
+   python run_sim.py --meta-mode --megaruns 3
+   
+   # Custom configuration
+   python run_sim.py --rounds 5 --seed 42 --no-memory
    ```
 
 ## Project Structure
 
 ```
-├── config/                 # Configuration files
-│   └── config.yaml        # Bank parameters & simulation settings
-├── agents/                 # AI agent implementations
-│   ├── bank_agent.py      # LLM-powered bank decisions
-│   └── summary_agent.py   # LLM-powered analysis
-├── src/                    # Core simulation code
-│   ├── simulation.py      # Main LangGraph orchestrator
-│   ├── models.py          # Data structures
-│   ├── consumer_logic.py  # Consumer utility model
-│   └── financial_calculator.py # P&L calculations
-├── data/                   # Output files (generated)
-│   ├── market_log.*       # Bank performance data
-│   └── portfolio_ledger.* # Loan-level details
-├── docs/                   # Documentation
-├── tests/                  # Test scripts
-├── scripts/                # Setup utilities
-└── run_sim.py             # Command-line interface
+├── config/                          # Configuration files
+│   ├── config.yaml                 # Core simulation settings
+│   └── initialise_banks.yaml       # Bank parameters (separated for meta-sim)
+├── agents/                          # AI agent implementations
+│   ├── bank_agent.py               # Bank decision AI
+│   ├── summary_agent.py            # Market analysis AI
+│   ├── lessons_agent.py            # Micro-lessons extraction
+│   ├── megarun_lessons_agent.py    # Macro-lessons extraction
+│   ├── bank_config_agent.py        # Adaptive configuration AI
+│   └── synthesis_agent.py          # Cross-megarun synthesis AI
+├── src/                             # Core simulation code
+│   ├── simulation.py               # Main LangGraph orchestrator
+│   ├── meta_simulation.py          # Meta-simulation orchestrator
+│   ├── models.py                   # Data structures
+│   ├── consumer_logic.py           # Consumer utility model
+│   ├── financial_calculator.py     # P&L calculations
+│   └── memory_store.py             # Long-term memory database
+├── memory/                          # Long-term storage (generated)
+│   └── lessons.db                  # SQLite database for lessons
+├── data/                            # Output files (generated)
+│   ├── market_log.*                # Bank performance data
+│   ├── portfolio_ledger.*          # Loan-level details
+│   ├── summary.md                  # Single-run analysis
+│   ├── lessons_learned.md          # Micro-lessons from run
+│   ├── megarun_N_report.md         # Per-megarun analysis
+│   └── meta_simulation_final_report.md # Cross-megarun synthesis
+├── docs/                            # Documentation
+├── tests/                           # Test scripts
+├── scripts/                         # Setup utilities
+└── run_sim.py                      # Command-line interface
 ```
 
 ## Outputs
 
-The simulation generates three main outputs in the `data/` directory:
+### Single Simulation Mode
+The simulation generates outputs in the `data/` directory:
 
 1. **market_log.parquet/xlsx**: Round-by-round bank performance metrics
 2. **portfolio_ledger.parquet**: Complete loan-level transaction history
 3. **summary.md**: AI-generated strategic analysis
+4. **lessons_learned.md**: Key insights and patterns identified
+
+### Meta-Simulation Mode
+Additional outputs for meta-simulations:
+
+1. **megarun_N_report.md**: Analysis for each megarun with tested hypotheses
+2. **meta_simulation_final_report.md**: Synthesis of insights across all megaruns
+3. **memory/lessons.db**: Persistent storage of lessons for future simulations
 
 ## Configuration
 
+### Core Settings
 Edit `config/config.yaml` to customize:
+- Simulation parameters (rounds, consumers)
+- AI agent model selection
+- Random seed for reproducibility
+
+### Bank Configuration
+Edit `config/initialise_banks.yaml` to customize:
 - Individual bank parameters (size, strategy, costs)
-- Consumer behavior parameters
-- Simulation settings (rounds, random seed)
+- Bank characteristics (image score, execution speed)
+- Initial portfolio states
+
+## Command-Line Options
+
+```bash
+python run_sim.py [OPTIONS]
+
+Options:
+  --config PATH         Path to config file (default: config/config.yaml)
+  --banks-config PATH   Path to banks config (default: config/initialise_banks.yaml)
+  --rounds N            Override number of rounds
+  --seed N              Set random seed
+  --test-mode           Quick test (3 rounds, faster model)
+  --meta-mode           Run meta-simulation with multiple megaruns
+  --megaruns N          Number of megaruns for meta-simulation (default: 3)
+  --no-memory           Disable lessons extraction
+  --verbose             Enable detailed logging
+```
 
 ## Bank Profiles
 
@@ -77,4 +137,38 @@ The simulation includes diverse bank types:
 - **Regional Banks**: Medium size, local reputation, balanced approach
 - **Growth Banks**: Aggressive pricing to gain market share
 
-See `config/config.yaml` for full bank specifications.
+See `config/initialise_banks.yaml` for full bank specifications.
+
+## Meta-Simulation Feature
+
+The meta-simulation mode runs multiple "megaruns" to test different market configurations and extract macro-level insights about optimal market design. Each megarun:
+
+1. **Tests a Hypothesis**: Based on historical lessons, the AI generates hypotheses about market design
+2. **Modifies Bank Configurations**: Adjusts parameters to test the hypothesis (e.g., higher equity, different strategy mix)
+3. **Runs Full Simulation**: Executes a complete simulation with the modified configuration
+4. **Extracts Macro-Lessons**: Identifies insights about how configuration affects market outcomes
+5. **Validates Hypotheses**: Determines if the hypothesis was confirmed, rejected, or inconclusive
+
+After all megaruns complete, a synthesis agent analyzes patterns across all runs to generate final recommendations for market designers.
+
+### Example Meta-Simulation Hypotheses:
+- "Higher average equity (50% increase) leads to more stable markets with fewer bankruptcies"
+- "More growth-oriented banks (80% Growth strategy) creates winner-take-all dynamics"
+- "Balanced image scores (0.6-0.8 range) optimize market competition vs stability"
+
+## Learning System
+
+The simulation implements a two-tier learning system:
+
+### Micro-Lessons (Single Simulation)
+- Extracted after each simulation run
+- Focus on bank strategies, market dynamics, and competitive patterns
+- Stored in `data/lessons_learned.md`
+
+### Macro-Lessons (Meta-Simulation)
+- Extracted after each megarun
+- Focus on market configuration effects and design principles
+- Stored in `memory/lessons.db` for long-term reference
+- Synthesized into final recommendations in `data/meta_simulation_final_report.md`
+
+The learning system enables the simulation to build knowledge over time and test increasingly sophisticated hypotheses about market design.
