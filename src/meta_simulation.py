@@ -13,7 +13,7 @@ import tempfile
 from pathlib import Path
 
 from src.models import MetaSimulationState
-from src.simulation import LoanMarketSimulation
+from src.simulation import LoanMarketSimulation, create_output_directory
 from src.memory_store import MemoryStore
 from agents.bank_config_agent import BankConfigurationAgent
 from agents.megarun_lessons_agent import MegarunLessonsAgent
@@ -42,6 +42,9 @@ class MetaLoanMarketSimulation:
         self.total_megaruns = total_megaruns
         self.memory_store = MemoryStore()
         
+        # Create output directory for this meta-simulation
+        self.output_dir = create_output_directory(base_dir="data", suffix="meta_sim")
+        
         # Initialize AI agents
         ai_params = self.base_config.get("ai_agent_params", {})
         self.bank_config_agent = BankConfigurationAgent(
@@ -65,8 +68,8 @@ class MetaLoanMarketSimulation:
         
     def _create_subgraph(self):
         """Create a compiled subgraph from the existing simulation."""
-        # Create a temporary simulation instance to get its compiled graph
-        temp_sim = LoanMarketSimulation("config/config.yaml", "config/initialise_banks.yaml")
+        # Create a temporary simulation instance to get its compiled graph (no output directory needed)
+        temp_sim = LoanMarketSimulation("config/config.yaml", "config/initialise_banks.yaml", create_output_dir=False)
         return temp_sim.graph
         
     def _build_meta_graph(self) -> StateGraph:
@@ -135,8 +138,8 @@ class MetaLoanMarketSimulation:
             state["hypothesis_results"]
         )
         
-        # Save the modified bank configuration to a temporary file
-        temp_banks_file = f"temp_banks_megarun_{current_megarun}.yaml"
+        # Save the modified bank configuration to a temporary file in the output directory
+        temp_banks_file = os.path.join(self.output_dir, f"megarun_{current_megarun}_banks_config.yaml")
         self.bank_config_agent.save_bank_configuration(bank_config, temp_banks_file)
         
         logger.info(f"Megarun {current_megarun} hypothesis: {hypothesis.hypothesis}")
@@ -158,9 +161,9 @@ class MetaLoanMarketSimulation:
         current_megarun = state["current_megarun"]
         logger.info(f"Running subgraph simulation for megarun {current_megarun}...")
         
-        # Create temporary config files for this megarun
-        temp_config_file = f"temp_config_megarun_{current_megarun}.yaml"
-        temp_banks_file = f"temp_banks_megarun_{current_megarun}.yaml"
+        # Create config files for this megarun in the output directory
+        temp_config_file = os.path.join(self.output_dir, f"megarun_{current_megarun}_config.yaml")
+        temp_banks_file = os.path.join(self.output_dir, f"megarun_{current_megarun}_banks_config.yaml")
         
         # Write current configuration
         with open(temp_config_file, 'w') as f:
@@ -169,8 +172,9 @@ class MetaLoanMarketSimulation:
         # The bank config was already saved in prepare_bank_configuration
         
         try:
-            # Create and run subgraph simulation
-            subgraph_sim = LoanMarketSimulation(temp_config_file, temp_banks_file)
+            # Create and run subgraph simulation with megarun prefix
+            file_prefix = f"megarun_{current_megarun}_"
+            subgraph_sim = LoanMarketSimulation(temp_config_file, temp_banks_file, output_dir=self.output_dir, file_prefix=file_prefix)
             subgraph_result = await subgraph_sim.run()
             
             # Extract market outcomes from subgraph state
@@ -191,11 +195,9 @@ class MetaLoanMarketSimulation:
             
             state["megarun_results"].append(megarun_result)
             
-        finally:
-            # Cleanup temporary files
-            for temp_file in [temp_config_file, temp_banks_file]:
-                if os.path.exists(temp_file):
-                    os.remove(temp_file)
+        except Exception as e:
+            logger.error(f"Error in subgraph simulation for megarun {current_megarun}: {e}", exc_info=True)
+            raise
                     
         logger.info(f"Completed subgraph simulation for megarun {current_megarun}")
         return state
@@ -227,10 +229,10 @@ class MetaLoanMarketSimulation:
             logger.info(f"AI lessons extraction completed - got {len(lessons)} lessons")
             
             # Save megarun report
-            os.makedirs("data", exist_ok=True)
-            with open(f"data/megarun_{current_megarun}_report.md", "w") as f:
+            report_path = os.path.join(self.output_dir, f"megarun_{current_megarun}_report.md")
+            with open(report_path, "w") as f:
                 f.write(report)
-            logger.info(f"Saved data/megarun_{current_megarun}_report.md")
+            logger.info(f"Saved {report_path}")
             
             # Store lessons in memory
             meta_sim_id = state.get("meta_simulation_id")
@@ -305,9 +307,10 @@ class MetaLoanMarketSimulation:
         )
         
         # Save final report
-        with open("data/meta_simulation_final_report.md", "w") as f:
+        final_report_path = os.path.join(self.output_dir, "meta_simulation_final_report.md")
+        with open(final_report_path, "w") as f:
             f.write(final_report)
-        logger.info("Saved data/meta_simulation_final_report.md")
+        logger.info(f"Saved {final_report_path}")
         
         # Update meta-simulation in database
         meta_sim_id = state.get("meta_simulation_id")

@@ -38,10 +38,24 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def create_output_directory(base_dir: str = "data", suffix: str = "") -> str:
+    """Create a timestamped output directory for this simulation run."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if suffix:
+        dir_name = f"{timestamp}_{suffix}"
+    else:
+        dir_name = timestamp
+    
+    output_dir = os.path.join(base_dir, dir_name)
+    os.makedirs(output_dir, exist_ok=True)
+    logger.info(f"Created output directory: {output_dir}")
+    return output_dir
+
+
 class LoanMarketSimulation:
     """Main simulation orchestrator using LangGraph."""
 
-    def __init__(self, config_path: str = "config/config.yaml", banks_config_path: str = "config/initialise_banks.yaml"):
+    def __init__(self, config_path: str = "config/config.yaml", banks_config_path: str = "config/initialise_banks.yaml", output_dir: str = None, file_prefix: str = "", create_output_dir: bool = True):
         """Initialize simulation with configuration."""
         with open(config_path, "r") as f:
             self.config = yaml.safe_load(f)
@@ -53,6 +67,20 @@ class LoanMarketSimulation:
 
         self.seed = self.config["seed"]
         np.random.seed(self.seed)
+        
+        # Set output directory
+        if create_output_dir and output_dir is None:
+            # Only create directory if not provided (standalone simulation)
+            self.output_dir = create_output_directory(base_dir="data", suffix="sim")
+        elif output_dir is not None:
+            # Use provided directory (meta-simulation case)
+            self.output_dir = output_dir
+        else:
+            # No output directory needed (temp simulation for graph creation)
+            self.output_dir = None
+        
+        # Set file prefix for output files
+        self.file_prefix = file_prefix
 
         # Initialize components
         self.bank_agent = BankAgent(self.config["ai_agent_params"])
@@ -1069,10 +1097,13 @@ Market Context (Round {state['current_round']}):
             self.config
         )
         
-        # Save lessons to file
-        with open("data/lessons_learned.md", "w", encoding="utf-8") as f:
-            f.write(lessons_md)
-        logger.info("Saved data/lessons_learned.md")
+        # Save lessons to file (only if output directory exists)
+        if self.output_dir:
+            filename = f"{self.file_prefix}lessons_learned.md" if self.file_prefix else "lessons_learned.md"
+            lessons_path = os.path.join(self.output_dir, filename)
+            with open(lessons_path, "w", encoding="utf-8") as f:
+                f.write(lessons_md)
+            logger.info(f"Saved {lessons_path}")
         
         # Store in state
         state["lessons_content"] = lessons_md
@@ -1082,29 +1113,37 @@ Market Context (Round {state['current_round']}):
 
     def _save_outputs(self, state: SimulationState, summary: str):
         """Save all simulation outputs."""
-        # Create data directory if it doesn't exist
-        os.makedirs("data", exist_ok=True)
-        
+        if not self.output_dir:
+            raise ValueError("No output directory available for saving files")
+            
         # Save market log
         market_log_df = pd.DataFrame(state["market_log"])
-        market_log_df.to_parquet("data/market_log.parquet", index=False)
-        logger.info("Saved data/market_log.parquet")
+        filename = f"{self.file_prefix}market_log.parquet" if self.file_prefix else "market_log.parquet"
+        market_log_path = os.path.join(self.output_dir, filename)
+        market_log_df.to_parquet(market_log_path, index=False)
+        logger.info(f"Saved {market_log_path}")
         
         # Also save market log as Excel
         try:
-            market_log_df.to_excel("data/market_log.xlsx", index=False)
-            logger.info("Saved data/market_log.xlsx")
+            filename = f"{self.file_prefix}market_log.xlsx" if self.file_prefix else "market_log.xlsx"
+            excel_path = os.path.join(self.output_dir, filename)
+            market_log_df.to_excel(excel_path, index=False)
+            logger.info(f"Saved {excel_path}")
         except ImportError:
             logger.warning("Could not save Excel file - openpyxl not installed. Run: pip install openpyxl")
 
         # Save portfolio ledger
-        state["portfolio_ledger"].to_parquet("data/portfolio_ledger.parquet", index=False)
-        logger.info("Saved data/portfolio_ledger.parquet")
+        filename = f"{self.file_prefix}portfolio_ledger.parquet" if self.file_prefix else "portfolio_ledger.parquet"
+        portfolio_path = os.path.join(self.output_dir, filename)
+        state["portfolio_ledger"].to_parquet(portfolio_path, index=False)
+        logger.info(f"Saved {portfolio_path}")
 
         # Save summary
-        with open("data/summary.md", "w", encoding="utf-8") as f:
+        filename = f"{self.file_prefix}summary.md" if self.file_prefix else "summary.md"
+        summary_path = os.path.join(self.output_dir, filename)
+        with open(summary_path, "w", encoding="utf-8") as f:
             f.write(summary)
-        logger.info("Saved data/summary.md")
+        logger.info(f"Saved {summary_path}")
 
     async def run(self):
         """Run the complete simulation."""

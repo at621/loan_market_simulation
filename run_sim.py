@@ -170,7 +170,7 @@ async def main():
         logger.info("=" * 60)
         logger.info("SIMULATION COMPLETE")
         logger.info("=" * 60)
-        logger.info("Outputs saved:")
+        logger.info(f"Outputs saved in: {simulation.output_dir}")
         if args.meta_mode:
             logger.info("  - meta_simulation_final_report.md")
             logger.info(f"  - megarun_X_report.md (for {args.megaruns} megaruns)")

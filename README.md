@@ -68,13 +68,23 @@ This simulation models 10 banks competing for loans from 100 consumers over mult
 │   └── memory_store.py             # Long-term memory database
 ├── memory/                          # Long-term storage (generated)
 │   └── lessons.db                  # SQLite database for lessons
-├── data/                            # Output files (generated)
-│   ├── market_log.*                # Bank performance data
-│   ├── portfolio_ledger.*          # Loan-level details
-│   ├── summary.md                  # Single-run analysis
-│   ├── lessons_learned.md          # Micro-lessons from run
-│   ├── megarun_N_report.md         # Per-megarun analysis
-│   └── meta_simulation_final_report.md # Cross-megarun synthesis
+├── data/                            # Output files (organized by timestamp)
+│   └── YYYYMMDD_HHMMSS_sim/         # Single simulation outputs
+│       ├── market_log.parquet       # Bank performance data
+│       ├── market_log.xlsx          # Excel version
+│       ├── portfolio_ledger.parquet # Loan-level details
+│       ├── summary.md               # Single-run analysis
+│       └── lessons_learned.md       # Micro-lessons from run
+│   └── YYYYMMDD_HHMMSS_meta_sim/    # Meta-simulation outputs
+│       ├── megarun_1_market_log.*   # Megarun 1 simulation data
+│       ├── megarun_1_portfolio_ledger.parquet # Megarun 1 loans
+│       ├── megarun_1_summary.md     # Megarun 1 analysis
+│       ├── megarun_1_lessons_learned.md # Megarun 1 micro-lessons
+│       ├── megarun_1_report.md      # Megarun 1 macro-lessons
+│       ├── megarun_1_config.yaml    # Configuration used
+│       ├── megarun_1_banks_config.yaml # Bank parameters
+│       ├── [... similar files for each megarun ...]
+│       └── meta_simulation_final_report.md # Cross-megarun synthesis
 ├── docs/                            # Documentation
 ├── tests/                           # Test scripts
 ├── scripts/                         # Setup utilities
@@ -83,8 +93,10 @@ This simulation models 10 banks competing for loans from 100 consumers over mult
 
 ## Outputs
 
+All simulation outputs are organized in timestamped directories within the `data/` folder. Each run creates a new directory with the format `YYYYMMDD_HHMMSS_[type]`, ensuring no outputs are overwritten.
+
 ### Single Simulation Mode
-The simulation generates outputs in the `data/` directory:
+Creates a directory like `data/20240115_143022_sim/` containing:
 
 1. **market_log.parquet/xlsx**: Round-by-round bank performance metrics
 2. **portfolio_ledger.parquet**: Complete loan-level transaction history
@@ -92,11 +104,18 @@ The simulation generates outputs in the `data/` directory:
 4. **lessons_learned.md**: Key insights and patterns identified
 
 ### Meta-Simulation Mode
-Additional outputs for meta-simulations:
+Creates a directory like `data/20240115_143022_meta_sim/` containing all files from all megaruns:
 
-1. **megarun_N_report.md**: Analysis for each megarun with tested hypotheses
-2. **meta_simulation_final_report.md**: Synthesis of insights across all megaruns
-3. **memory/lessons.db**: Persistent storage of lessons for future simulations
+1. **megarun_N_market_log.parquet/xlsx**: Bank performance data for each megarun
+2. **megarun_N_portfolio_ledger.parquet**: Loan data for each megarun
+3. **megarun_N_summary.md**: AI analysis for each megarun
+4. **megarun_N_lessons_learned.md**: Micro-lessons for each megarun
+5. **megarun_N_report.md**: Macro-lessons analysis for each megarun
+6. **megarun_N_config.yaml**: Configuration used for each megarun
+7. **megarun_N_banks_config.yaml**: Bank parameters for each megarun
+8. **meta_simulation_final_report.md**: Synthesis of insights across all megaruns
+
+The memory database (`memory/lessons.db`) persists across all runs for long-term learning.
 
 ## Configuration
 
