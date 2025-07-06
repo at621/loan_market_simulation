@@ -137,6 +137,28 @@ class SimulationState(TypedDict):
     lessons_content: Optional[str]  # Generated lessons learned content
 
 
+class MetaSimulationState(TypedDict):
+    """State for meta-simulation that runs multiple subgraph instances."""
+    # Meta-simulation tracking
+    current_megarun: int
+    total_megaruns: int
+    
+    # Configuration management
+    base_config: Dict  # Base simulation config
+    current_bank_config: Dict  # Current banks configuration for this megarun
+    
+    # Megarun results
+    megarun_results: List[Dict]  # Results from each completed megarun
+    megarun_lessons: List[str]  # Lessons from each megarun
+    
+    # Final outputs
+    final_synthesis: Optional[str]  # Cross-megarun analysis
+    
+    # Hypotheses tracking
+    tested_hypotheses: List[Dict]  # Hypotheses tested in each megarun
+    hypothesis_results: List[Dict]  # Results of hypothesis testing
+
+
 class BankDecisionState(TypedDict):
     """Substate for individual bank decision."""
     bank_id: str

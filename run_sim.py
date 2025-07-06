@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from src.simulation import LoanMarketSimulation
+from src.meta_simulation import MetaLoanMarketSimulation
 
 
 def setup_logging(verbose: bool = False):
@@ -104,6 +105,19 @@ async def main():
         action="store_true",
         help="Disable memory/lessons extraction after simulation"
     )
+    
+    parser.add_argument(
+        "--meta-mode",
+        action="store_true",
+        help="Run meta-simulation with multiple megaruns (default: single simulation)"
+    )
+    
+    parser.add_argument(
+        "--megaruns",
+        type=int,
+        default=3,
+        help="Number of megaruns for meta-simulation (default: 3)"
+    )
 
     args = parser.parse_args()
 
@@ -132,7 +146,12 @@ async def main():
         if args.test_mode:
             logger.info("Running in TEST MODE - reduced rounds and faster model")
 
-        simulation = LoanMarketSimulation(config_path, args.banks_config)
+        if args.meta_mode:
+            logger.info(f"Running META-SIMULATION with {args.megaruns} megaruns")
+            simulation = MetaLoanMarketSimulation(config_path, args.banks_config, args.megaruns)
+        else:
+            logger.info("Running single simulation")
+            simulation = LoanMarketSimulation(config_path, args.banks_config)
 
         # Run the simulation
         await simulation.run()
@@ -145,11 +164,16 @@ async def main():
         logger.info("SIMULATION COMPLETE")
         logger.info("=" * 60)
         logger.info("Outputs saved:")
-        logger.info("  - market_log.parquet")
-        logger.info("  - portfolio_ledger.parquet")
-        logger.info("  - summary.md")
-        if not args.no_memory:
-            logger.info("  - lessons_learned.md")
+        if args.meta_mode:
+            logger.info("  - meta_simulation_final_report.md")
+            logger.info(f"  - megarun_X_report.md (for {args.megaruns} megaruns)")
+            logger.info("  - Individual simulation outputs for each megarun")
+        else:
+            logger.info("  - market_log.parquet")
+            logger.info("  - portfolio_ledger.parquet")
+            logger.info("  - summary.md")
+            if not args.no_memory:
+                logger.info("  - lessons_learned.md")
 
     except KeyboardInterrupt:
         logger.info("\nSimulation interrupted by user")

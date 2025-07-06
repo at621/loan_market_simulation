@@ -74,7 +74,7 @@ class MemoryStore:
                 )
             """)
             
-            # Lessons table
+            # Lessons table (for subgraph micro-lessons)
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS lessons (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -85,6 +85,41 @@ class MemoryStore:
                     conditions TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     FOREIGN KEY (simulation_id) REFERENCES simulations(id)
+                )
+            """)
+            
+            # Add lesson_level column if it doesn't exist (migration)
+            try:
+                conn.execute("ALTER TABLE lessons ADD COLUMN lesson_level TEXT DEFAULT 'micro'")
+            except sqlite3.OperationalError:
+                # Column already exists, ignore
+                pass
+            
+            # Megarun lessons table (for meta-simulation macro-lessons)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS megarun_lessons (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    meta_simulation_id INTEGER NOT NULL,
+                    megarun_number INTEGER NOT NULL,
+                    lesson_type TEXT NOT NULL,
+                    lesson_text TEXT NOT NULL,
+                    confidence REAL NOT NULL,
+                    hypothesis_tested TEXT,
+                    hypothesis_result TEXT,
+                    market_configuration TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            """)
+            
+            # Meta-simulations table
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS meta_simulations (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp TEXT NOT NULL,
+                    total_megaruns INTEGER NOT NULL,
+                    base_config_hash TEXT NOT NULL,
+                    final_synthesis TEXT,
+                    created_at TEXT NOT NULL
                 )
             """)
             
@@ -122,10 +157,22 @@ class MemoryStore:
                 )
             """)
             
-            # Create indices
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_lessons_type ON lessons(lesson_type)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_strategy ON bank_outcomes(initial_strategy)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_survived ON bank_outcomes(survived)")
+            # Create indices (with error handling for existing indices)
+            indices = [
+                ("idx_lessons_type", "lessons", "lesson_type"),
+                ("idx_lessons_level", "lessons", "lesson_level"),
+                ("idx_megarun_lessons_type", "megarun_lessons", "lesson_type"),
+                ("idx_megarun_lessons_meta_sim", "megarun_lessons", "meta_simulation_id"),
+                ("idx_outcomes_strategy", "bank_outcomes", "initial_strategy"),
+                ("idx_outcomes_survived", "bank_outcomes", "survived")
+            ]
+            
+            for idx_name, table_name, column_name in indices:
+                try:
+                    conn.execute(f"CREATE INDEX IF NOT EXISTS {idx_name} ON {table_name}({column_name})")
+                except sqlite3.OperationalError:
+                    # Index creation failed, likely due to missing column, skip
+                    pass
             
     def store_simulation(self, config: Dict, seed: int, num_rounds: int, 
                         market_metrics: Dict) -> int:
@@ -331,3 +378,93 @@ class MemoryStore:
             return 0.85 + (observation_count - 10) * 0.005
         else:
             return min(0.95, 0.85 + observation_count * 0.001)
+        
+    def store_meta_simulation(self, total_megaruns: int, base_config: Dict) -> int:
+        """Store a new meta-simulation and return its ID."""
+        config_str = json.dumps(base_config, sort_keys=True, default=str)
+        config_hash = hashlib.md5(config_str.encode()).hexdigest()
+        
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute("""
+                INSERT INTO meta_simulations 
+                (timestamp, total_megaruns, base_config_hash, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (
+                datetime.now().isoformat(),
+                total_megaruns,
+                config_hash,
+                datetime.now().isoformat()
+            ))
+            return cursor.lastrowid
+            
+    def store_megarun_lessons(self, meta_simulation_id: int, megarun_number: int,
+                             lessons: List[Dict], hypothesis: Optional[Dict] = None):
+        """Store lessons from a megarun."""
+        with sqlite3.connect(self.db_path) as conn:
+            for lesson in lessons:
+                conn.execute("""
+                    INSERT INTO megarun_lessons 
+                    (meta_simulation_id, megarun_number, lesson_type, lesson_text,
+                     confidence, hypothesis_tested, hypothesis_result, 
+                     market_configuration, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    meta_simulation_id,
+                    megarun_number,
+                    lesson.get('lesson_type', 'macro'),
+                    lesson.get('lesson_text', ''),
+                    lesson.get('confidence', 0.7),
+                    json.dumps(hypothesis.get('hypothesis', '')) if hypothesis else None,
+                    json.dumps(hypothesis.get('result', '')) if hypothesis else None,
+                    json.dumps(lesson.get('market_configuration', {})),
+                    datetime.now().isoformat()
+                ))
+                
+    def update_meta_simulation_synthesis(self, meta_simulation_id: int, final_synthesis: str):
+        """Update meta-simulation with final synthesis."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                UPDATE meta_simulations
+                SET final_synthesis = ?
+                WHERE id = ?
+            """, (final_synthesis, meta_simulation_id))
+            
+    def get_megarun_lessons(self, meta_simulation_id: Optional[int] = None,
+                           min_confidence: float = 0.5) -> List[Dict]:
+        """Get megarun lessons, optionally filtered by meta-simulation."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            query = """
+                SELECT * FROM megarun_lessons 
+                WHERE confidence >= ?
+            """
+            params = [min_confidence]
+            
+            if meta_simulation_id:
+                query += " AND meta_simulation_id = ?"
+                params.append(meta_simulation_id)
+                
+            query += " ORDER BY confidence DESC, created_at DESC"
+            
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor]
+            
+    def get_historical_megarun_patterns(self, min_observations: int = 2) -> List[Dict]:
+        """Get patterns from historical megaruns."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            
+            # Group similar lessons and count occurrences
+            cursor = conn.execute("""
+                SELECT lesson_type, lesson_text, 
+                       AVG(confidence) as avg_confidence,
+                       COUNT(*) as observation_count,
+                       GROUP_CONCAT(hypothesis_tested) as hypotheses
+                FROM megarun_lessons
+                GROUP BY lesson_type, lesson_text
+                HAVING observation_count >= ?
+                ORDER BY observation_count DESC, avg_confidence DESC
+            """, (min_observations,))
+            
+            return [dict(row) for row in cursor]
