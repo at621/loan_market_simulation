@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 import json
 import re
+import pandas as pd
 
 from src.models import BankDecision
 
@@ -34,12 +35,23 @@ class BankAgent:
             raise
         self.max_retries = config.get("max_retries", 3)
         self.use_fallback = config.get("use_fallback_on_error", True)
+        self.decision_logs = []  # Store prompts and decisions for detailed logging
 
     async def make_decision(
         self, bank_info: Dict, market_context: Dict
     ) -> BankDecision:
         """Make a rate decision for a bank given its context."""
         prompt = self._build_prompt(bank_info, market_context)
+        
+        # Log the decision details
+        decision_log = {
+            "bank_id": bank_info["bank_id"],
+            "round": market_context["current_round"],
+            "prompt": prompt,
+            "response": None,
+            "decision": None,
+            "timestamp": None
+        }
 
         for attempt in range(self.max_retries):
             try:
@@ -47,6 +59,16 @@ class BankAgent:
                 decision = self._parse_decision(response, bank_info["bank_id"])
 
                 if decision.validate():
+                    # Store the successful decision log
+                    decision_log["response"] = response
+                    decision_log["decision"] = {
+                        "rate_bps": decision.rate_bps,
+                        "reasoning": decision.reasoning,
+                        "expected_outcome": decision.expected_outcome
+                    }
+                    decision_log["timestamp"] = pd.Timestamp.now().isoformat()
+                    self.decision_logs.append(decision_log)
+                    
                     return decision
                 else:
                     logger.warning(
@@ -62,6 +84,11 @@ class BankAgent:
                     f"WARNING: Bank {bank_info['bank_id']} AI decision failed (attempt {attempt + 1}): {e}"
                 )
                 if attempt == self.max_retries - 1:
+                    # Log the failed attempt
+                    decision_log["response"] = f"ERROR: {str(e)}"
+                    decision_log["timestamp"] = pd.Timestamp.now().isoformat()
+                    self.decision_logs.append(decision_log)
+                    
                     print(
                         f"ERROR: Bank {bank_info['bank_id']} AI agent failed after {self.max_retries} attempts!"
                     )
@@ -128,6 +155,8 @@ class BankAgent:
         # Build the prompt
         prompt = f"""You are the CEO of {bank_info['bank_id']} in a competitive loan market simulation.
 
+🏦 YOU ARE BANK: {bank_info['bank_id']} (IMPORTANT: Remember this is YOUR bank ID)
+
 YOUR OBJECTIVE: Maximize cumulative profit over the remaining {remaining_rounds} rounds.
 
 YOUR BANK'S PROFILE:
@@ -152,11 +181,11 @@ MARKET INTELLIGENCE:
 
 {bankruptcy_warning}
 
-HISTORICAL PERFORMANCE DATA:
-{historical_data}
-
 COMPETITOR STRATEGIES:
 {chr(10).join(competitor_strategies)}
+
+COMPREHENSIVE MARKET DATA (Your bank marked with *):
+{historical_data}
 
 STRATEGIC ANALYSIS:
 """
@@ -258,28 +287,137 @@ Make your decision:"""
         )
 
     def _build_historical_data(self, bank_info: Dict, market_context: Dict) -> str:
-        """Build historical performance data table for the bank agent."""
+        """Build comprehensive historical market data tables for the bank agent."""
         if not market_context.get("market_history"):
             return "No historical data available (first round)."
         
         bank_id = bank_info["bank_id"]
         history = market_context["market_history"]
         
-        # Build table header
-        lines = ["Round | ROE (%) | Rate (bps) | Volume ($M) | Market Share (%)"]
-        lines.append("------|---------|-----------|-------------|----------------")
+        # Get all bank IDs from the market history
+        all_bank_ids = set()
+        for round_data in history:
+            all_bank_ids.update(round_data.offered_rates.keys())
+        all_bank_ids = sorted(list(all_bank_ids))
+        
+        # Build comprehensive market intelligence tables
+        lines = []
+        
+        # 1. ROE by Round (%) - Highlight your bank
+        lines.append("## MARKET INTELLIGENCE - ROE BY ROUND (%)")
+        lines.append("")
+        header = "| Round |" + "".join(f" {bid:>6} |" for bid in all_bank_ids)
+        lines.append(header)
+        separator = "|-------|" + "".join("--------|" for _ in all_bank_ids)
+        lines.append(separator)
         
         for i, round_data in enumerate(history, 1):
-            # Get this bank's data for the round
-            roe = round_data.profits.get(bank_id, 0) / max(1, round_data.equities.get(bank_id, 1)) * 100
-            rate = round_data.offered_rates.get(bank_id, 0)
-            volume = round_data.new_volumes.get(bank_id, 0) / 1_000_000  # Convert to millions
-            
-            # Calculate market share
+            row_data = [f"|   {i:2d}  |"]
+            for bid in all_bank_ids:
+                equity = round_data.equities.get(bid, 1)
+                profit = round_data.profits.get(bid, 0)
+                roe = (profit / max(1, equity)) * 100
+                
+                # Highlight your bank with asterisk
+                if bid == bank_id:
+                    row_data.append(f" {roe:5.1f}*|")
+                else:
+                    row_data.append(f" {roe:5.1f} |")
+            lines.append("".join(row_data))
+        
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        
+        # 2. Interest Rates by Round (bps)
+        lines.append("## INTEREST RATES BY ROUND (bps)")
+        lines.append("")
+        lines.append(header)
+        lines.append(separator)
+        
+        for i, round_data in enumerate(history, 1):
+            row_data = [f"|   {i:2d}  |"]
+            for bid in all_bank_ids:
+                rate = round_data.offered_rates.get(bid, 0)
+                
+                # Highlight your bank with asterisk
+                if bid == bank_id:
+                    row_data.append(f" {rate:4d}* |")
+                else:
+                    row_data.append(f" {rate:4d}  |")
+            lines.append("".join(row_data))
+        
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        
+        # 3. Profit by Round ($M)
+        lines.append("## PROFIT BY ROUND ($M)")
+        lines.append("")
+        lines.append(header)
+        lines.append(separator)
+        
+        for i, round_data in enumerate(history, 1):
+            row_data = [f"|   {i:2d}  |"]
+            for bid in all_bank_ids:
+                profit = round_data.profits.get(bid, 0) / 1_000_000  # Convert to millions
+                
+                # Highlight your bank with asterisk
+                if bid == bank_id:
+                    row_data.append(f" {profit:5.1f}*|")
+                else:
+                    row_data.append(f" {profit:5.1f} |")
+            lines.append("".join(row_data))
+        
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        
+        # 4. Equity by Round ($M)
+        lines.append("## EQUITY BY ROUND ($M)")
+        lines.append("")
+        lines.append(header)
+        lines.append(separator)
+        
+        for i, round_data in enumerate(history, 1):
+            row_data = [f"|   {i:2d}  |"]
+            for bid in all_bank_ids:
+                equity = round_data.equities.get(bid, 0) / 1_000_000  # Convert to millions
+                
+                # Highlight your bank with asterisk
+                if bid == bank_id:
+                    row_data.append(f" {equity:5.1f}*|")
+                else:
+                    row_data.append(f" {equity:5.1f} |")
+            lines.append("".join(row_data))
+        
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        
+        # 5. Market Share by Round (%)
+        lines.append("## MARKET SHARE BY ROUND (%)")
+        lines.append("")
+        lines.append(header)
+        lines.append(separator)
+        
+        for i, round_data in enumerate(history, 1):
+            row_data = [f"|   {i:2d}  |"]
             total_volume = sum(round_data.new_volumes.values())
-            market_share = (round_data.new_volumes.get(bank_id, 0) / total_volume * 100) if total_volume > 0 else 0
             
-            lines.append(f"  {i:2d}  | {roe:7.1f} | {rate:9d} | {volume:11.1f} | {market_share:14.1f}")
+            for bid in all_bank_ids:
+                volume = round_data.new_volumes.get(bid, 0)
+                market_share = (volume / total_volume * 100) if total_volume > 0 else 0
+                
+                # Highlight your bank with asterisk
+                if bid == bank_id:
+                    row_data.append(f" {market_share:5.1f}*|")
+                else:
+                    row_data.append(f" {market_share:5.1f} |")
+            lines.append("".join(row_data))
+        
+        lines.append("")
+        lines.append("* = YOUR BANK")
         
         return "\n".join(lines)
 
@@ -321,3 +459,84 @@ Make your decision:"""
 """
         
         return ""
+    
+    def get_decision_logs(self) -> List[Dict]:
+        """Get all decision logs for this agent."""
+        return self.decision_logs
+    
+    def clear_decision_logs(self):
+        """Clear decision logs (useful between megaruns)."""
+        self.decision_logs = []
+    
+    def format_decision_logs_markdown(self) -> str:
+        """Format all decision logs as a detailed markdown document."""
+        if not self.decision_logs:
+            return "# Bank Decision Logs\n\nNo decisions recorded.\n"
+        
+        lines = ["# Bank AI Decision Logs", ""]
+        lines.append(f"Generated at: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        
+        # Group logs by round
+        logs_by_round = {}
+        for log in self.decision_logs:
+            round_num = log.get("round", 0)
+            if round_num not in logs_by_round:
+                logs_by_round[round_num] = []
+            logs_by_round[round_num].append(log)
+        
+        # Format each round
+        for round_num in sorted(logs_by_round.keys()):
+            lines.append(f"## Round {round_num}")
+            lines.append("")
+            
+            # Sort banks by ID for consistent ordering
+            round_logs = sorted(logs_by_round[round_num], key=lambda x: x.get("bank_id", ""))
+            
+            for log in round_logs:
+                bank_id = log.get("bank_id", "Unknown")
+                lines.append(f"### Bank {bank_id}")
+                lines.append("")
+                
+                # Timestamp
+                if log.get("timestamp"):
+                    lines.append(f"**Decision Time:** {log['timestamp']}")
+                    lines.append("")
+                
+                # Prompt section
+                lines.append("#### Prompt Sent to AI:")
+                lines.append("```")
+                lines.append(log.get("prompt", "No prompt recorded"))
+                lines.append("```")
+                lines.append("")
+                
+                # Response section
+                lines.append("#### AI Response:")
+                if log.get("response") and not log["response"].startswith("ERROR:"):
+                    lines.append("```")
+                    lines.append(log["response"])
+                    lines.append("```")
+                elif log.get("response"):
+                    lines.append(f"⚠️ **Error:** {log['response']}")
+                else:
+                    lines.append("*No response recorded*")
+                lines.append("")
+                
+                # Decision summary
+                if log.get("decision"):
+                    decision = log["decision"]
+                    lines.append("#### Decision Summary:")
+                    lines.append(f"- **Rate Set:** {decision.get('rate_bps', 'N/A')} bps")
+                    lines.append(f"- **Reasoning:** {decision.get('reasoning', 'No reasoning provided')}")
+                    lines.append(f"- **Expected Outcome:** {decision.get('expected_outcome', 'No prediction provided')}")
+                else:
+                    lines.append("#### Decision Summary:")
+                    lines.append("*No valid decision made*")
+                
+                lines.append("")
+                lines.append("---")
+                lines.append("")
+        
+        return "\n".join(lines)

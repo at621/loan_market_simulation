@@ -175,6 +175,11 @@ class MetaLoanMarketSimulation:
             # Create and run subgraph simulation with megarun prefix
             file_prefix = f"megarun_{current_megarun}_"
             subgraph_sim = LoanMarketSimulation(temp_config_file, temp_banks_file, output_dir=self.output_dir, file_prefix=file_prefix)
+            
+            # Clear decision logs from previous runs
+            if hasattr(subgraph_sim.bank_agent, 'clear_decision_logs'):
+                subgraph_sim.bank_agent.clear_decision_logs()
+            
             subgraph_result = await subgraph_sim.run()
             
             # Extract market outcomes from subgraph state

@@ -1144,6 +1144,15 @@ Market Context (Round {state['current_round']}):
         with open(summary_path, "w", encoding="utf-8") as f:
             f.write(summary)
         logger.info(f"Saved {summary_path}")
+        
+        # Save detailed bank decision logs
+        if hasattr(self.bank_agent, 'format_decision_logs_markdown'):
+            decision_logs_md = self.bank_agent.format_decision_logs_markdown()
+            filename = f"{self.file_prefix}bank_decision_logs.md" if self.file_prefix else "bank_decision_logs.md"
+            decision_logs_path = os.path.join(self.output_dir, filename)
+            with open(decision_logs_path, "w", encoding="utf-8") as f:
+                f.write(decision_logs_md)
+            logger.info(f"Saved {decision_logs_path}")
 
     async def run(self):
         """Run the complete simulation."""
