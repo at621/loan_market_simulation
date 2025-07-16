@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 import json
@@ -64,7 +64,9 @@ class BankAgent:
                     decision_log["decision"] = {
                         "rate_bps": decision.rate_bps,
                         "reasoning": decision.reasoning,
-                        "expected_outcome": decision.expected_outcome
+                        "expected_outcome": decision.expected_outcome,
+                        "previous_decision_evaluation": decision.previous_decision_evaluation,
+                        "previous_decision_score": decision.previous_decision_score
                     }
                     decision_log["timestamp"] = pd.Timestamp.now().isoformat()
                     self.decision_logs.append(decision_log)
@@ -98,6 +100,68 @@ class BankAgent:
             f"Bank {bank_info['bank_id']} failed to get valid decision after {self.max_retries} retries"
         )
 
+    def _get_previous_decision(self, bank_id: str, current_round: int) -> Optional[Dict]:
+        """Get the previous round's decision for this bank."""
+        if current_round <= 1:
+            return None
+            
+        for log in reversed(self.decision_logs):
+            if log.get("bank_id") == bank_id and log.get("round") == current_round - 1:
+                return log
+        return None
+    
+    def _build_decision_history(self, bank_id: str, current_round: int) -> str:
+        """Build a comprehensive decision history for this bank."""
+        if current_round <= 1:
+            return "No previous decisions (Round 1)."
+        
+        # Get all previous decisions for this bank
+        bank_decisions = []
+        for log in self.decision_logs:
+            if log.get("bank_id") == bank_id and log.get("round", 0) < current_round:
+                bank_decisions.append(log)
+        
+        # Sort by round
+        bank_decisions.sort(key=lambda x: x.get("round", 0))
+        
+        if not bank_decisions:
+            return "No previous decisions recorded."
+        
+        lines = []
+        lines.append("YOUR PREVIOUS DECISIONS HISTORY:")
+        lines.append("")
+        
+        for i, decision_log in enumerate(bank_decisions):
+            round_num = decision_log.get("round", 0)
+            decision = decision_log.get("decision", {})
+            
+            lines.append(f"Round {round_num}:")
+            lines.append(f"  • Rate Set: {decision.get('rate_bps', 'N/A')} bps")
+            lines.append(f"  • Reasoning: {decision.get('reasoning', 'No reasoning recorded')}")
+            lines.append(f"  • Expected Outcome: {decision.get('expected_outcome', 'No expectation recorded')}")
+            
+            # Show self-evaluation from the NEXT round (if available)
+            next_round_log = None
+            for next_log in self.decision_logs:
+                if (next_log.get("bank_id") == bank_id and 
+                    next_log.get("round", 0) == round_num + 1):
+                    next_round_log = next_log
+                    break
+            
+            if next_round_log and next_round_log.get("decision", {}).get("previous_decision_evaluation"):
+                next_decision = next_round_log.get("decision", {})
+                evaluation = next_decision.get("previous_decision_evaluation", "")
+                score = next_decision.get("previous_decision_score", "N/A")
+                lines.append(f"  • Self-Evaluation (Next Round): {evaluation}")
+                lines.append(f"  • Self-Score: {score}/10")
+            else:
+                lines.append(f"  • Self-Evaluation: Not yet evaluated")
+                lines.append(f"  • Self-Score: Not yet scored")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+
     def _build_prompt(self, bank_info: Dict, market_context: Dict) -> str:
         """Build the prompt for the bank agent."""
         # Calculate derived metrics
@@ -107,6 +171,9 @@ class BankAgent:
 
         # Build historical performance data
         historical_data = self._build_historical_data(bank_info, market_context)
+        
+        # Build decision history for this bank
+        decision_history = self._build_decision_history(bank_info['bank_id'], market_context['current_round'])
 
         # Get market statistics
         if market_context["market_history"]:
@@ -187,6 +254,8 @@ COMPETITOR STRATEGIES:
 COMPREHENSIVE MARKET DATA (Your bank marked with *):
 {historical_data}
 
+{decision_history}
+
 STRATEGIC ANALYSIS:
 """
 
@@ -223,15 +292,81 @@ CONSUMER BEHAVIOR:
 - Consumers value: low rates (weighted by sensitivity), bank image, execution speed
 - Average loan size: $100,000
 
+"""
+        
+        # Add previous decision evaluation section if not round 1
+        previous_decision = self._get_previous_decision(bank_info['bank_id'], market_context['current_round'])
+        if previous_decision and previous_decision.get('decision'):
+            prev_dec = previous_decision['decision']
+            
+            # Calculate objective score
+            actual_metrics = {
+                'market_share': bank_info.get('last_market_share', 0),
+                'profit': bank_info['last_profit'],
+                'roe': bank_info['last_roe']
+            }
+            
+            score_analysis = self._calculate_objective_score(
+                prev_dec.get('expected_outcome', ''),
+                actual_metrics
+            )
+            
+            # Store for later use in parsing
+            self._last_score_analysis = score_analysis
+            
+            prompt += f"""
+PREVIOUS ROUND SELF-EVALUATION:
+Your previous decision (Round {market_context['current_round'] - 1}):
+- Rate set: {prev_dec.get('rate_bps', 'N/A')} bps
+- Reasoning: {prev_dec.get('reasoning', 'No reasoning recorded')}
+- Expected outcome: {prev_dec.get('expected_outcome', 'No expectation recorded')}
+
+Actual outcome:
+- Your actual market share: {bank_info.get('last_market_share', 0):.1f}%
+- Your actual profit: ${bank_info['last_profit']/1e6:.1f}M
+- Your actual ROE: {bank_info['last_roe']:.1%}
+
+OBJECTIVE SCORING ANALYSIS:"""
+            
+            if score_analysis['expected']['market_share'] is not None:
+                prompt += f"""
+- Predicted market share: {score_analysis['expected']['market_share']:.1f}% | Actual: {actual_metrics['market_share']:.1f}%"""
+            else:
+                prompt += """
+- No market share prediction found"""
+                
+            if score_analysis['expected']['profit'] is not None:
+                prompt += f"""
+- Predicted profit: ${score_analysis['expected']['profit']/1e6:.1f}M | Actual: ${actual_metrics['profit']/1e6:.1f}M"""
+            
+            prompt += f"""
+- Objective accuracy score: {score_analysis['score']}/10
+- Score reasoning: {score_analysis['reasoning']}
+
+Based on this objective analysis, please:
+1. Acknowledge your prediction accuracy
+2. Explain what factors you missed or correctly anticipated
+3. Accept the objective score of {score_analysis['score']}/10
+"""
+        
+        prompt += """
 DECISION REQUIRED:
 Set your interest rate for this round. Consider:
 1. Your survival constraints (equity > 0)
 2. Competitive dynamics and likely responses
 3. Trade-off between volume and margin
 4. Your publicly known strategy creates expectations
+5. Lessons from your previous decisions
 
 Provide your decision in the following format:
-RATE: [your rate in basis points, integer between 100-1000]
+"""
+        
+        if previous_decision:
+            prompt += """EVALUATION: [2-3 sentences acknowledging the objective score and explaining what you learned]
+SCORE: """ + str(score_analysis['score']) + """ (objective score based on prediction accuracy)
+"""
+        
+        prompt += """RATE: [your rate in basis points, integer between 100-1000]
 REASONING: [2-3 sentences explaining your strategic logic]
 EXPECTED: [brief prediction of market share and profit impact]
 
@@ -253,6 +388,24 @@ Make your decision:"""
 
     def _parse_decision(self, response: str, bank_id: str) -> BankDecision:
         """Parse the LLM response into a BankDecision object."""
+        # Extract evaluation (if present)
+        evaluation_match = re.search(
+            r"EVALUATION:\s*(.+?)(?=SCORE:|RATE:|$)", response, re.IGNORECASE | re.DOTALL
+        )
+        evaluation = (
+            evaluation_match.group(1).strip()
+            if evaluation_match
+            else None
+        )
+        
+        # Extract score (if present) - now it's the objective score
+        score_match = re.search(r"SCORE:\s*(\d+)", response, re.IGNORECASE)
+        score = int(score_match.group(1)) if score_match else None
+        
+        # If score wasn't found and we have a previous decision, calculate it objectively
+        if score is None and hasattr(self, '_last_score_analysis'):
+            score = self._last_score_analysis.get('score', None)
+        
         # Extract rate
         rate_match = re.search(r"RATE:\s*(\d+)", response, re.IGNORECASE)
         if not rate_match:
@@ -284,6 +437,8 @@ Make your decision:"""
             rate_bps=rate_bps,
             reasoning=reasoning,
             expected_outcome=expected,
+            previous_decision_evaluation=evaluation,
+            previous_decision_score=score,
         )
 
     def _build_historical_data(self, bank_info: Dict, market_context: Dict) -> str:
@@ -421,6 +576,142 @@ Make your decision:"""
         
         return "\n".join(lines)
 
+    def _calculate_objective_score(self, expected_outcome: str, actual_metrics: Dict) -> Dict[str, Any]:
+        """
+        Calculate objective self-assessment score based on prediction accuracy.
+        
+        Args:
+            expected_outcome: The bank's prediction from previous round
+            actual_metrics: Dict with actual_market_share, actual_profit, actual_roe
+            
+        Returns:
+            Dict with score (1-10) and breakdown of accuracy metrics
+        """
+        import re
+        
+        # Extract expected values from the prediction text
+        expected_values = {
+            'market_share': None,
+            'profit': None,
+            'roe': None
+        }
+        
+        # Try to extract market share prediction (e.g., "15-20%", "15%", "targeting 15%")
+        market_share_patterns = [
+            r'(\d+)-(\d+)%\s*(?:market\s*share|share)',
+            r'(?:targeting|expecting|aiming\s*for|around)\s*(\d+)%?\s*(?:market\s*share|share)',
+            r'(\d+)%\s*(?:market\s*share|share)',
+            r'(?:market\s*share|share).*?(\d+)-(\d+)%',
+            r'(?:market\s*share|share).*?(\d+)%'
+        ]
+        
+        for pattern in market_share_patterns:
+            match = re.search(pattern, expected_outcome, re.IGNORECASE)
+            if match:
+                groups = match.groups()
+                if len(groups) == 2:  # Range
+                    expected_values['market_share'] = (float(groups[0]) + float(groups[1])) / 2
+                else:  # Single value
+                    expected_values['market_share'] = float(groups[0])
+                break
+        
+        # Try to extract profit prediction (e.g., "$2M", "$2.5 million", "profit of 2M")
+        profit_patterns = [
+            r'\$(\d+(?:\.\d+)?)\s*[Mm](?:illion)?',
+            r'profit.*?(\d+(?:\.\d+)?)\s*[Mm](?:illion)?',
+            r'(\d+(?:\.\d+)?)\s*[Mm](?:illion)?\s*(?:in\s*)?profit'
+        ]
+        
+        for pattern in profit_patterns:
+            match = re.search(pattern, expected_outcome, re.IGNORECASE)
+            if match:
+                expected_values['profit'] = float(match.group(1)) * 1_000_000  # Convert to dollars
+                break
+        
+        # Try to extract ROE prediction (e.g., "15% ROE", "ROE of 15%")
+        roe_patterns = [
+            r'(\d+(?:\.\d+)?)\s*%\s*ROE',
+            r'ROE.*?(\d+(?:\.\d+)?)\s*%',
+            r'return\s*on\s*equity.*?(\d+(?:\.\d+)?)\s*%'
+        ]
+        
+        for pattern in roe_patterns:
+            match = re.search(pattern, expected_outcome, re.IGNORECASE)
+            if match:
+                expected_values['roe'] = float(match.group(1))
+                break
+        
+        # Calculate accuracy scores
+        scores = {}
+        
+        # Market share accuracy (0-100% scale, max error of 20% = score 0)
+        if expected_values['market_share'] is not None and actual_metrics.get('market_share') is not None:
+            error = abs(expected_values['market_share'] - actual_metrics['market_share'])
+            scores['market_share_score'] = max(0, 10 - (error / 2))  # 2% error = -1 point
+        
+        # Profit accuracy (relative error)
+        if expected_values['profit'] is not None and actual_metrics.get('profit') is not None:
+            if actual_metrics['profit'] > 0:
+                relative_error = abs(expected_values['profit'] - actual_metrics['profit']) / actual_metrics['profit']
+                scores['profit_score'] = max(0, 10 - (relative_error * 20))  # 50% error = 0 score
+            else:
+                # If actual profit is negative, check if prediction was also negative
+                if expected_values['profit'] < 0:
+                    scores['profit_score'] = 7  # Good for predicting loss
+                else:
+                    scores['profit_score'] = 3  # Poor for missing the loss
+        
+        # ROE accuracy (percentage point difference)
+        if expected_values['roe'] is not None and actual_metrics.get('roe') is not None:
+            error = abs(expected_values['roe'] - actual_metrics['roe'] * 100)  # Convert actual to percentage
+            scores['roe_score'] = max(0, 10 - (error / 2))  # 2 percentage points = -1 point
+        
+        # Calculate overall score (weighted average of available scores)
+        available_scores = [v for k, v in scores.items() if v is not None]
+        if available_scores:
+            overall_score = sum(available_scores) / len(available_scores)
+        else:
+            # If no quantitative predictions were made, give a neutral score
+            overall_score = 5.0
+        
+        return {
+            'score': round(overall_score),
+            'expected': expected_values,
+            'actual': actual_metrics,
+            'component_scores': scores,
+            'reasoning': self._generate_score_reasoning(expected_values, actual_metrics, scores)
+        }
+
+    def _generate_score_reasoning(self, expected: Dict, actual: Dict, scores: Dict) -> str:
+        """Generate reasoning for the objective score."""
+        reasons = []
+        
+        if scores.get('market_share_score') is not None:
+            if expected['market_share'] is not None and actual['market_share'] is not None:
+                diff = actual['market_share'] - expected['market_share']
+                if abs(diff) < 2:
+                    reasons.append(f"Excellent market share prediction (expected {expected['market_share']:.1f}%, actual {actual['market_share']:.1f}%)")
+                elif abs(diff) < 5:
+                    reasons.append(f"Good market share prediction (expected {expected['market_share']:.1f}%, actual {actual['market_share']:.1f}%)")
+                else:
+                    reasons.append(f"Poor market share prediction (expected {expected['market_share']:.1f}%, actual {actual['market_share']:.1f}%)")
+        
+        if scores.get('profit_score') is not None:
+            if expected['profit'] is not None and actual['profit'] is not None:
+                exp_str = f"${expected['profit']/1e6:.1f}M"
+                act_str = f"${actual['profit']/1e6:.1f}M"
+                if scores['profit_score'] >= 8:
+                    reasons.append(f"Excellent profit prediction (expected {exp_str}, actual {act_str})")
+                elif scores['profit_score'] >= 5:
+                    reasons.append(f"Moderate profit prediction (expected {exp_str}, actual {act_str})")
+                else:
+                    reasons.append(f"Poor profit prediction (expected {exp_str}, actual {act_str})")
+        
+        if not reasons:
+            reasons.append("No quantitative predictions found in expected outcome")
+        
+        return "; ".join(reasons)
+
     def _check_bankruptcy_risk(self, bank_info: Dict, market_context: Dict) -> str:
         """Check if bank is at risk of bankruptcy due to volume decline."""
         if not market_context.get("market_history"):
@@ -528,6 +819,14 @@ Make your decision:"""
                 if log.get("decision"):
                     decision = log["decision"]
                     lines.append("#### Decision Summary:")
+                    
+                    # Show self-evaluation if present
+                    if decision.get('previous_decision_evaluation'):
+                        lines.append("##### Self-Evaluation of Previous Round:")
+                        lines.append(f"- **Evaluation:** {decision.get('previous_decision_evaluation', 'N/A')}")
+                        lines.append(f"- **Score:** {decision.get('previous_decision_score', 'N/A')}/10")
+                        lines.append("")
+                    
                     lines.append(f"- **Rate Set:** {decision.get('rate_bps', 'N/A')} bps")
                     lines.append(f"- **Reasoning:** {decision.get('reasoning', 'No reasoning provided')}")
                     lines.append(f"- **Expected Outcome:** {decision.get('expected_outcome', 'No prediction provided')}")

@@ -116,6 +116,117 @@ class ConsumerDecisionEngine:
         
         return max(0.0, min(1.0, stability_score))
 
+    def add_utility_noise(self, base_utility: float, noise_std: float) -> float:
+        """
+        Add random noise to utility calculation to simulate consumer uncertainty.
+        
+        Args:
+            base_utility: The base utility score
+            noise_std: Standard deviation of the noise (0.0 = no noise)
+            
+        Returns:
+            Noisy utility score (clamped to be non-negative)
+        """
+        if noise_std <= 0:
+            return base_utility
+        
+        noise = np.random.normal(0, noise_std)
+        return max(0.0, base_utility + noise)
+
+    def calculate_choice_probabilities(self, utilities: List[float], temperature: float) -> List[float]:
+        """
+        Convert utilities to choice probabilities using logit (softmax) model.
+        
+        Args:
+            utilities: List of utility values for each option
+            temperature: Temperature parameter (lower = more deterministic, higher = more random)
+            
+        Returns:
+            List of probabilities (sum to 1.0)
+        """
+        if not utilities or all(u <= 0 for u in utilities):
+            return []
+        
+        # Apply temperature scaling
+        scaled_utilities = [u / temperature for u in utilities]
+        
+        # Compute softmax probabilities (with numerical stability)
+        max_util = max(scaled_utilities)
+        exp_utilities = [np.exp(u - max_util) for u in scaled_utilities]
+        total_exp = sum(exp_utilities)
+        
+        if total_exp == 0:
+            # Fallback to uniform distribution if all utilities are very low
+            return [1.0 / len(utilities)] * len(utilities)
+        
+        return [exp_u / total_exp for exp_u in exp_utilities]
+
+    def select_bank_probabilistically(
+        self, 
+        consumer: pd.Series, 
+        banks: pd.DataFrame, 
+        rate_scores: pd.Series,
+        portfolio_history: List[Dict[str, float]],
+        choice_config: Dict[str, float]
+    ) -> Optional[str]:
+        """
+        Select a bank probabilistically using noisy utilities and logit choice.
+        
+        Args:
+            consumer: Consumer data
+            banks: Available banks DataFrame
+            rate_scores: Pre-calculated rate scores for banks
+            portfolio_history: Portfolio history for stability calculation
+            choice_config: Configuration with logit_temperature and utility_noise_std
+            
+        Returns:
+            Selected bank_id or None if no bank meets reservation utility
+        """
+        if banks.empty:
+            return None
+        
+        # Calculate base utilities for all banks
+        base_utilities = []
+        bank_ids = []
+        
+        for _, bank in banks.iterrows():
+            rate_score = rate_scores.loc[bank.name] if bank.name in rate_scores.index else 0.0
+            base_utility = self.calculate_consumer_utility(
+                consumer, bank, rate_score, portfolio_history
+            )
+            base_utilities.append(base_utility)
+            bank_ids.append(bank["id"])
+        
+        # Add noise to utilities
+        noisy_utilities = [
+            self.add_utility_noise(util, choice_config["utility_noise_std"])
+            for util in base_utilities
+        ]
+        
+        # Filter banks that meet reservation utility (using noisy utilities)
+        reservation_utility = choice_config.get("reservation_utility", 0.35)
+        viable_banks = []
+        viable_utilities = []
+        
+        for i, utility in enumerate(noisy_utilities):
+            if utility >= reservation_utility:
+                viable_banks.append(bank_ids[i])
+                viable_utilities.append(utility)
+        
+        if not viable_banks:
+            return None
+        
+        # Calculate choice probabilities using logit model
+        probabilities = self.calculate_choice_probabilities(
+            viable_utilities, choice_config["logit_temperature"]
+        )
+        
+        if not probabilities:
+            return None
+        
+        # Sample from the probability distribution
+        return np.random.choice(viable_banks, p=probabilities)
+
     def allocate_consumers(
         self,
         consumers: pd.DataFrame,
@@ -125,14 +236,21 @@ class ConsumerDecisionEngine:
         reservation_utility: float,
         portfolio_history: Optional[List[Dict[str, float]]] = None,
         bank_capacities: Optional[Dict[str, float]] = None,
+        choice_config: Optional[Dict[str, float]] = None,
     ) -> Dict[str, Optional[str]]:
         """
-        Allocate consumers to banks based on utility maximization with capacity constraints.
-        Uses waterfall allocation: consumers with highest utility get priority, and when
-        their preferred bank is full, they get allocated to their next choice.
+        Allocate consumers to banks using probabilistic choice with capacity constraints.
+        Uses probabilistic selection based on noisy utilities and logit model.
 
         Args:
+            consumers: Consumer DataFrame
+            market_rates: Dict mapping bank_id to offered rate (bps)
+            banks: Banks DataFrame
+            active_bank_ids: List of active bank IDs
+            reservation_utility: Minimum utility threshold for taking a loan
+            portfolio_history: Historical portfolio data for stability calculation
             bank_capacities: Dict mapping bank_id to available lending capacity (in dollars)
+            choice_config: Dict with logit_temperature and utility_noise_std parameters
 
         Returns:
             Dict mapping consumer_id to bank_id (or None if no loan taken)
@@ -148,6 +266,17 @@ class ConsumerDecisionEngine:
         # Default to unlimited capacity if not provided
         if bank_capacities is None:
             bank_capacities = {bank_id: float('inf') for bank_id in active_bank_ids}
+
+        # Default choice configuration if not provided
+        if choice_config is None:
+            choice_config = {
+                "logit_temperature": 1.5,
+                "utility_noise_std": 0.08,
+                "reservation_utility": reservation_utility
+            }
+        else:
+            # Ensure reservation_utility is in the config
+            choice_config["reservation_utility"] = reservation_utility
 
         # Convert market rates to DataFrame for vectorization
         active_banks = banks[banks["id"].isin(active_bank_ids)].copy()
@@ -165,71 +294,42 @@ class ConsumerDecisionEngine:
                 max_rate - min_rate
             )
 
-        # Calculate utilities for all consumer-bank pairs and prepare for waterfall allocation
-        consumer_preferences = []
-
-        for _, consumer in consumers.iterrows():
-            # Calculate utility for each bank using the separate utility function
-            utilities = []
-
-            for _, bank in active_banks.iterrows():
-                utility = self.calculate_consumer_utility(
-                    consumer, bank, bank["rate_score"], portfolio_history
-                )
-                utilities.append({"bank_id": bank["id"], "utility": utility})
-
-            # Sort banks by utility for this consumer (highest first)
-            utilities.sort(key=lambda x: x["utility"], reverse=True)
-            
-            # Only consider banks that meet reservation utility
-            valid_utilities = [u for u in utilities if u["utility"] >= reservation_utility]
-            
-            if valid_utilities:
-                # Store consumer with their bank preferences and their best utility score
-                consumer_preferences.append({
-                    "consumer_id": consumer["id"],
-                    "loan_size": consumer["loan_size"],
-                    "bank_preferences": valid_utilities,
-                    "best_utility": valid_utilities[0]["utility"]
-                })
-            else:
-                # Consumer will not take any loan
-                consumer_preferences.append({
-                    "consumer_id": consumer["id"],
-                    "loan_size": consumer["loan_size"],
-                    "bank_preferences": [],
-                    "best_utility": 0.0
-                })
-
-        # Sort consumers by their best utility score (highest first) - most satisfied consumers get priority
-        consumer_preferences.sort(key=lambda x: x["best_utility"], reverse=True)
+        # Create rate_scores Series for efficient lookup
+        rate_scores = pd.Series(
+            active_banks["rate_score"].values,
+            index=active_banks.index
+        )
 
         # Initialize tracking
         remaining_capacities = bank_capacities.copy()
         allocations = {}
 
-        # Waterfall allocation
-        for consumer_data in consumer_preferences:
-            consumer_id = consumer_data["consumer_id"]
-            loan_size = consumer_data["loan_size"]
-            bank_preferences = consumer_data["bank_preferences"]
+        # Process each consumer with probabilistic choice
+        for _, consumer in consumers.iterrows():
+            consumer_id = consumer["id"]
+            loan_size = consumer["loan_size"]
             
-            allocated = False
+            # Filter banks that have sufficient capacity
+            available_banks = active_banks[
+                active_banks["id"].map(lambda bid: remaining_capacities[bid] >= loan_size)
+            ]
             
-            # Try to allocate to preferred banks in order
-            for bank_pref in bank_preferences:
-                bank_id = bank_pref["bank_id"]
-                
-                # Check if bank has sufficient capacity
-                if remaining_capacities[bank_id] >= loan_size:
-                    # Allocate to this bank
-                    allocations[consumer_id] = bank_id
-                    remaining_capacities[bank_id] -= loan_size
-                    allocated = True
-                    break
+            if available_banks.empty:
+                # No banks have capacity for this consumer
+                allocations[consumer_id] = None
+                continue
             
-            # If no bank could accommodate, consumer gets no loan
-            if not allocated:
+            # Select bank probabilistically
+            selected_bank_id = self.select_bank_probabilistically(
+                consumer, available_banks, rate_scores, portfolio_history, choice_config
+            )
+            
+            if selected_bank_id is not None:
+                # Allocate to selected bank
+                allocations[consumer_id] = selected_bank_id
+                remaining_capacities[selected_bank_id] -= loan_size
+            else:
+                # Consumer chose not to take a loan
                 allocations[consumer_id] = None
 
         # Log allocation summary

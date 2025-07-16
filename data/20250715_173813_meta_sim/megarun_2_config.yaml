@@ -1,0 +1,149 @@
+ai_agent_params:
+  max_retries: 3
+  model: gpt-4o-mini
+  temperature: 0.7
+  timeout_seconds: 30
+  use_fallback_on_error: true
+bank_params:
+  count: 10
+  default_conditions:
+    cost_of_funds_bps: 300
+    equity_start: 10000000
+    operating_cost_per_loan: 1000
+    portfolio_balance_start: 100000000
+    portfolio_rate_start_bps: 500
+  individual_banks:
+    B00:
+      cost_of_funds_bps: 280
+      equity_start: 50000000
+      execution_speed: 0.7
+      image_score: 0.9
+      name: MegaBank
+      operating_cost_per_loan: 800
+      portfolio_balance_start: 500000000
+      portfolio_rate_start_bps: 480
+      size_category: large
+      strategy: Maintain
+    B01:
+      cost_of_funds_bps: 300
+      equity_start: 20000000
+      execution_speed: 0.8
+      image_score: 0.6
+      name: GrowthBank
+      operating_cost_per_loan: 1000
+      portfolio_balance_start: 200000000
+      portfolio_rate_start_bps: 500
+      size_category: medium
+      strategy: Grow
+    B02:
+      cost_of_funds_bps: 320
+      equity_start: 8000000
+      execution_speed: 0.9
+      image_score: 0.5
+      name: ChallengerBank
+      operating_cost_per_loan: 1200
+      portfolio_balance_start: 80000000
+      portfolio_rate_start_bps: 520
+      size_category: small
+      strategy: Grow
+    B03:
+      cost_of_funds_bps: 300
+      equity_start: 15000000
+      execution_speed: 0.75
+      image_score: 0.7
+      name: RegionalBank
+      operating_cost_per_loan: 950
+      portfolio_balance_start: 150000000
+      portfolio_rate_start_bps: 490
+      size_category: medium
+      strategy: Maintain
+    B04:
+      cost_of_funds_bps: 350
+      equity_start: 5000000
+      execution_speed: 0.95
+      image_score: 0.4
+      name: FinTech
+      operating_cost_per_loan: 500
+      portfolio_balance_start: 50000000
+      portfolio_rate_start_bps: 550
+      size_category: small
+      strategy: Grow
+    B05:
+      cost_of_funds_bps: 285
+      equity_start: 35000000
+      execution_speed: 0.65
+      image_score: 0.85
+      name: EstablishedBank
+      operating_cost_per_loan: 850
+      portfolio_balance_start: 350000000
+      portfolio_rate_start_bps: 475
+      size_category: large
+      strategy: Maintain
+    B06:
+      cost_of_funds_bps: 310
+      equity_start: 6000000
+      execution_speed: 0.7
+      image_score: 0.8
+      name: CommunityBank
+      operating_cost_per_loan: 1100
+      portfolio_balance_start: 60000000
+      portfolio_rate_start_bps: 510
+      size_category: small
+      strategy: Maintain
+    B07:
+      cost_of_funds_bps: 310
+      equity_start: 12000000
+      execution_speed: 0.85
+      image_score: 0.55
+      name: AggressiveGrowth
+      operating_cost_per_loan: 1050
+      portfolio_balance_start: 120000000
+      portfolio_rate_start_bps: 520
+      size_category: medium
+      strategy: Grow
+    B08:
+      cost_of_funds_bps: 330
+      equity_start: 10000000
+      execution_speed: 0.92
+      image_score: 0.45
+      name: OnlineBank
+      operating_cost_per_loan: 600
+      portfolio_balance_start: 100000000
+      portfolio_rate_start_bps: 530
+      size_category: medium
+      strategy: Grow
+    B09:
+      cost_of_funds_bps: 295
+      equity_start: 18000000
+      execution_speed: 0.68
+      image_score: 0.75
+      name: ConservativeBank
+      operating_cost_per_loan: 900
+      portfolio_balance_start: 180000000
+      portfolio_rate_start_bps: 485
+      size_category: medium
+      strategy: Maintain
+behavior_params:
+  grow_undercut_bps: 15
+  maintain_walk_stdev_bps: 5
+  reservation_utility: 0.35
+consumer_choice_params:
+  logit_temperature: 1.5
+  utility_noise_std: 0.08
+customer_params:
+  attribute_dist:
+    alpha: 2.0
+    beta: 2.0
+  count: 100
+  loan_size_dist:
+    mean: 100000
+    sigma: 25000
+memory_params:
+  enabled: true
+  min_confidence: 0.5
+  min_observations: 5
+  similarity_threshold: 0.8
+seed: 42
+simulation_params:
+  amortization_years: 5
+  rounds: 8

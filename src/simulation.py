@@ -536,6 +536,14 @@ class LoanMarketSimulation:
         else:
             avg_portfolio_rate = 0
 
+        # Calculate market share from last round
+        last_market_share = 0
+        if state["market_history"]:
+            last_round = state["market_history"][-1]
+            total_volume = sum(last_round.new_volumes.values())
+            if total_volume > 0:
+                last_market_share = (last_round.new_volumes.get(bank_id, 0) / total_volume) * 100
+        
         bank_info = {
             "bank_id": bank_id,
             "strategy": bank_row["strategy"],
@@ -551,6 +559,7 @@ class LoanMarketSimulation:
             "last_roe": financials.roe,
             "last_new_loan_volume": financials.new_loan_volume,
             "last_new_loan_count": financials.new_loan_count,
+            "last_market_share": last_market_share,
             "round": state["current_round"],
         }
         
@@ -739,6 +748,7 @@ Market Context (Round {state['current_round']}):
                         "rate": decision.rate_bps,
                         "reasoning": decision.reasoning,
                         "expected_outcome": decision.expected_outcome,
+                        "previous_decision_score": decision.previous_decision_score,
                     }
                 }
             }
@@ -754,6 +764,7 @@ Market Context (Round {state['current_round']}):
                         "rate": fallback_rate,
                         "reasoning": f"Fallback due to error: {str(e)}",
                         "expected_outcome": "uncertain",
+                        "previous_decision_score": None,
                     }
                 }
             }
@@ -804,6 +815,13 @@ Market Context (Round {state['current_round']}):
         # Calculate bank lending capacities (10x equity - current portfolio)
         bank_capacities = self._calculate_bank_capacities(state)
         
+        # Prepare choice configuration
+        choice_config = {
+            "logit_temperature": self.config["consumer_choice_params"]["logit_temperature"],
+            "utility_noise_std": self.config["consumer_choice_params"]["utility_noise_std"],
+            "reservation_utility": self.config["behavior_params"]["reservation_utility"]
+        }
+        
         allocations = self.consumer_engine.allocate_consumers(
             state["consumers"],
             state["market_rates"],
@@ -812,6 +830,7 @@ Market Context (Round {state['current_round']}):
             self.config["behavior_params"]["reservation_utility"],
             portfolio_history,
             bank_capacities,
+            choice_config,
         )
 
         state["consumer_allocations"] = allocations
@@ -1005,6 +1024,10 @@ Market Context (Round {state['current_round']}):
             ]
             initial_loan_count = len(initial_portfolio)
 
+            # Get the bank's decision score from this round
+            bank_decision = state["bank_decisions"].get(bank_id, {})
+            decision_score = bank_decision.get("previous_decision_score", None)
+            
             market_log_entries.append(
                 {
                     "bank_id": bank_id,
@@ -1017,6 +1040,7 @@ Market Context (Round {state['current_round']}):
                     "equity": fin.equity,
                     "ROE": fin.roe,
                     "bankrupt_flag": fin.is_bankrupt,
+                    "previous_decision_score": decision_score,  # Self-evaluation score
                     # Enhanced portfolio tracking
                     "initial_loan_count": initial_loan_count,
                     "start_loan_count": start_loan_count,

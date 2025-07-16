@@ -1,6 +1,6 @@
 seed: 42
 simulation_params:
-  rounds: 3
+  rounds: 8
   amortization_years: 5
 
 customer_params:
@@ -21,6 +21,15 @@ behavior_params:
   # Bank Heuristics (used as fallback if AI agent fails)
   grow_undercut_bps: 15 # How many bps a Grow bank undercuts the avg rate by
   maintain_walk_stdev_bps: 5 # Std Dev of the random walk for Maintain banks
+
+consumer_choice_params:
+  # Logit model temperature (lower = more deterministic, higher = more random)
+  # 0.5 = very decisive, 1.5 = moderate randomness, 3.0 = high randomness
+  logit_temperature: 1.5
+  
+  # Utility noise standard deviation (simulates imperfect information)
+  # 0.0 = no noise, 0.08 = moderate uncertainty, 0.15 = high uncertainty
+  utility_noise_std: 0.08
 
 # AI Agent configuration
 ai_agent_params:

@@ -174,6 +174,8 @@ class BankDecision:
     rate_bps: int
     reasoning: str
     expected_outcome: str
+    previous_decision_evaluation: Optional[str] = None
+    previous_decision_score: Optional[int] = None
     
     def validate(self) -> bool:
         """Validate the decision is within bounds."""
